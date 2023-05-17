@@ -3,6 +3,7 @@
 name: Python 3.7 test suite
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
