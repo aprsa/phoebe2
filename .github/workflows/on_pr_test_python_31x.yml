@@ -52,9 +52,9 @@ jobs:
         export PHOEBE_ENABLE_PLOTTING='FALSE'
         export PHOEBE_UPDATE_PASSBAND_IGNORE_VERSION='TRUE'
 
-    - name: Update pip
-      run: |
-        python -m pip install --upgrade pip
+    # - name: Update pip
+    #   run: |
+    #     python -m pip install --upgrade pip
 
     - name: Install numpy ${{ matrix.numpy-version }}, scipy ${{ matrix.scipy-version }}, astropy ${{ matrix.astropy-version }}, matplotlib ${{ matrix.mpl-version }} and dependencies
       run: |
