@@ -93,10 +93,6 @@ jobs:
     - name: Test photodynam install
       run: |
         python -c "import photodynam"
-
-    - name: Export environment variables
-      run: |
-        export PHOEBE_ENABLE_PLOTTING=FALSE
   
     - name: Run tests
       run: |
