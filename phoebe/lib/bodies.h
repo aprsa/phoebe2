@@ -5,7 +5,7 @@
   using standard Euclidian coordinate system (x,y,z).
 
   The gradient should be outward from the surface, but it is not
-  an requirement.
+  a requirement.
 
   Supported models:
 
@@ -22,15 +22,15 @@
 /* ===================================================================
   Torus
 
-  Defined implicitly by the constrain and the gradient of it
+  Defined implicitly by the constraint and its gradient:
 
     (x^2 + y^2 + z^2 + R^2 - A^2)^2 - 4 R^2 (x^2 + y^2) = 0
 
-  Explicitely it is defined as
+  Defined explicitly as:
 
     [x,y,z] = R_z(phi_1) [R + A cos(phi_2), 0, A cos(phi_2) ]
 
-    R_z(phi)= [cos(phi), -sin(phi), 0; sin(phi), cos(phi), 0; 0, 0, 1]
+    R_z(phi) = [cos(phi), -sin(phi), 0; sin(phi), cos(phi), 0; 0, 0, 1]
 
  =================================================================== */
 
@@ -45,14 +45,14 @@ struct Ttorus {
     params [1] = A
   */
 
-  Ttorus(void *params){
+  Ttorus(void *params) {
     T *p = (T*)params;
     R = p[0];
     A = p[1];
   }
 
   /*
-    Definition of the constrain and the gradient of it
+    Definition of the constraint and its gradient
 
     Input:
       r[3] = {x, y, z}
@@ -60,11 +60,11 @@ struct Ttorus {
     Output:
 
       ret[4]:
-        {ret[0], ret[1], ret[2]} = grad-potential
-        ret[3] = potential-value
+        {ret[0], ret[1], ret[2]} = gradient of the potential
+        ret[3] = value of the potential
 
   */
-  void grad(T r[3], T ret[4]){
+  void grad(T r[3], T ret[4]) {
 
     T r2 = r[0]*r[0] + r[1]*r[1] + r[2]*r[2],
       R2 = R*R,
@@ -96,7 +96,7 @@ struct Ttorus {
 /* ===================================================================
   Sphere
 
-  Defined of implicitly by a constrain
+  Defined of implicitly by the constraint
 
     x^2 + y^2 + z^2 - R^2 = 0
  =================================================================== */
@@ -118,7 +118,7 @@ struct Tsphere {
   }
 
   /*
-    Definition of the constrain and the gradient of it
+    Definition of the constraint and its gradient
 
     Input:
       r[3] = {x, y, z}
@@ -126,11 +126,11 @@ struct Tsphere {
     Output:
 
       ret[4]:
-        {ret[0], ret[1], ret[2]} = grad-potential
-        ret[3] = potential-value
-
+        {ret[0], ret[1], ret[2]} = gradient of the potential
+        ret[3] = value of the potential
   */
-  void grad(T r[3], T ret[4], const bool & precision = false){
+
+  void grad(T r[3], T ret[4], const bool & precision = false) {
 
     for (int i = 0; i < 3; ++i) ret[i] = 2*r[i];
 
@@ -138,7 +138,7 @@ struct Tsphere {
   }
 
 
-  void grad_only(T r[3], T ret[3], const bool & precision = false){
+  void grad_only(T r[3], T ret[3], const bool & precision = false) {
 
     for (int i = 0; i < 3; ++i) ret[i] = 2*r[i];
 
@@ -147,7 +147,7 @@ struct Tsphere {
   /*
     Initial point
   */
-  void init(T r[3], T n[3]){
+  void init(T r[3], T n[3]) {
     r[0] = R;
     r[1] = r[2] = 0;
 
@@ -430,7 +430,7 @@ struct Tgen_roche {
 /* ===================================================================
   Rotating star
 
-  Defined of implicitly by a constrain
+  Defined of implicitly by a constraint
 
     1/r + 1/2 omega^2 (x^2 + y^2) = Omega_0
  =================================================================== */
@@ -467,13 +467,13 @@ struct Trot_star {
       Omega0 - (1/utils::hypot3(r) + w2*(r[0]*r[0] + r[1]*r[1])/2);
   }
   /*
-    Definition of the potential minus the reference and the
-    gradient of it:
+    Definition of the potential minus the reference and its
+    gradient:
 
       -grad-potential Omega
 
-    Minus guaranties that the normal points outward from the
-    iso-potential surfaces.
+    Minus guarantees that the normal points outward from the
+    equipotential surfaces.
 
     Input:
       r[3] = {x, y, z}
@@ -522,8 +522,8 @@ struct Trot_star {
 
       -grad-potential Omega
 
-    Minus guaranties that the normal points outward from the
-    iso-potential surfaces.
+    Minus guarantees that the normal points outward from the
+    equipotential surfaces.
 
     Input:
       r[3] = {x, y, z}
@@ -618,7 +618,6 @@ struct Tmisaligned_rot_star {
     params[2] = spin[1]
     params[3] = spin[2]
     params[4] = Omega0
-
   */
 
   Tmisaligned_rot_star(T *params)

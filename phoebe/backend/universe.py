@@ -1,13 +1,11 @@
 import numpy as np
-from scipy.optimize import newton
 from scipy.special import sph_harm as Y
-from math import sqrt, sin, cos, acos, atan2, trunc, pi
-import sys, os
+import os
 import copy
 
 from phoebe.atmospheres import passbands
-from phoebe.distortions import roche, rotstar
-from phoebe.backend import eclipse, oc_geometry, mesh, mesh_wd
+from phoebe.distortions import rotstar
+from phoebe.backend import eclipse, mesh, mesh_wd
 from phoebe.utils import _bytes
 import libphoebe
 
@@ -172,9 +170,10 @@ class System(object):
         # support stars, but eventually the classname could be Disk, Spot, etc
         if 'dynamics_method' in kwargs.keys():
             # already set as default above
-            _dump = kwargs.pop('dynamics_method')
+            _ = kwargs.pop('dynamics_method')
 
         meshables = hier.get_meshables()
+
         def get_distortion_method(hier, compute_ps, component, **kwargs):
             if hier.get_kind_of(component) in ['envelope']:
                 return 'roche'
@@ -281,7 +280,6 @@ class System(object):
         for body in self.bodies:
             body.reset(force_remesh=force_remesh, force_recompute_instantaneous=force_recompute_instantaneous)
 
-
     def update_positions(self, time, xs, ys, zs, vxs, vys, vzs,
                          ethetas, elongans, eincls,
                          ds=None, Fs=None, ignore_effects=False):
@@ -290,16 +288,15 @@ class System(object):
 
         all arrays should be for the current time, but iterable over all bodies
         """
-        logger.debug('system.update_positions ignore_effects={}'.format(ignore_effects))
+        logger.debug(f'system.update_positions {ignore_effects=}')
         self.xs = np.array(_value(xs))
         self.ys = np.array(_value(ys))
         self.zs = np.array(_value(zs))
 
-        for starref,body in self.items():
+        for starref, body in self.items():
             body.update_position(time, xs, ys, zs, vxs, vys, vzs,
                                  ethetas, elongans, eincls,
                                  ds=ds, Fs=Fs, ignore_effects=ignore_effects)
-
 
     def populate_observables(self, time, kinds, datasets, ignore_effects=False):
         """
@@ -340,7 +337,8 @@ class System(object):
         logger.debug("reflection: computing bolometric intensities")
         fluxes_intrins_per_body = []
         for starref, body in self.items():
-            if body.mesh is None: continue
+            if body.mesh is None:
+                continue
             abs_normal_intensities = passbands.Inorm_bol_bb(Teff=body.mesh.teffs.for_computations,
                                                             atm='blackbody',
                                                             photon_weighted=False)
@@ -507,7 +505,6 @@ class System(object):
 
         return horizon
 
-
     def observe(self, dataset, kind, components=None, **kwargs):
         """
         TODO: add documentation
@@ -516,7 +513,7 @@ class System(object):
         """
 
         meshes = self.meshes
-        if kind=='lp':
+        if kind == 'lp':
             def sv(p, p0, w):
                 # Subsidiary variable:
                 return (p0-p)/(w/2)
@@ -567,11 +564,9 @@ class System(object):
 
             return {'flux_densities': avg_line}
 
-
-        elif kind=='rv':
+        elif kind == 'rv':
             visibilities = meshes.get_column_flat('visibilities', components)
-
-            if np.all(visibilities==0):
+            if np.all(visibilities == 0):
                 # then no triangles are visible, so we should return nan
                 return {'rv': np.nan}
 
@@ -581,17 +576,16 @@ class System(object):
             # be weighted by the visibility of the triangle
             mus = meshes.get_column_flat('mus', components)
             areas = meshes.get_column_flat('areas_si', components)
-            # NOTE: don't need ptfarea because its a float (same for all
+            # NOTE: don't need ptfarea because it's a single float (same for all
             # elements, regardless of component)
 
             # NOTE: the intensities are already projected but are per unit area
             # so we need to multiply by the /projected/ area of each triangle (thus the extra mu)
             return {'rv': np.average(rvs, weights=abs_intensities*areas*mus*visibilities)}
 
-        elif kind=='lc':
+        elif kind == 'lc':
             visibilities = meshes.get_column_flat('visibilities')
-
-            if np.all(visibilities==0):
+            if np.all(visibilities == 0):
                 # then no triangles are visible, so we should return nan -
                 # probably shouldn't ever happen for lcs
                 return {'flux': np.nan}
@@ -601,10 +595,10 @@ class System(object):
             areas = meshes.get_column_flat('areas_si', components)
 
             # assume that all bodies are using the same passband and therefore
-            # will have the same ptfarea.  If this assumption is ever a problem -
+            # will have the same ptfarea. If this assumption is ever a problem -
             # then we will need to build a flat column based on the component
             # of each element so that ptfarea is an array with the same shape
-            # as those above
+            # as those above.
             for body in self.bodies:
                 if body.mesh is not None:
                     if isinstance(body, Envelope):
@@ -615,13 +609,16 @@ class System(object):
                         ptfarea = body.get_ptfarea(dataset)
                     break
 
-            # intensities (Imu) is the intensity in the direction of the observer per unit surface area of the triangle, scaled according to pblum scaling
+            # intensities (Imu) is the intensity in the direction of the observer per
+            #     unit surface area of the triangle, scaled according to pblum scaling
             # areas is the area of each triangle (using areas_si from the mesh to force SI units)
             # areas*mus is the area of each triangle projected in the direction of the observer
             # visibilities is 0 for hidden, 0.5 for partial, 1.0 for visible
-            # areas*mus*visibilities is the visibile projected area of each triangle (ie half the area for a partially-visible triangle)
-            # so, intensities*areas*mus*visibilities is the intensity in the direction of the observer per the observed projected area of that triangle
-            # and the sum of these values is the observed flux
+            # areas*mus*visibilities is the visibile projected area of each triangle (ie half
+            #     the area for a partially-visible triangle)
+            # intensities*areas*mus*visibilities is the intensity in the direction of the
+            #     observer per the observed projected area of that triangle and the sum of these
+            #     values is the observed flux
 
             # note that the intensities are already projected (Imu) but are per unit area
             # so we need to multiply by the /projected/ area of each triangle (thus the extra mu)
@@ -630,8 +627,6 @@ class System(object):
 
         else:
             raise NotImplementedError("observe for dataset with kind '{}' not implemented".format(kind))
-
-
 
 
 class Body(object):
@@ -648,7 +643,7 @@ class Body(object):
         """
 
         # TODO: eventually some of this stuff that assumes a BINARY orbit may need to be moved into
-        # some subclass of Body (maybe BinaryBody).  These will want to be shared by Star and CustomBody,
+        # some subclass of Body (maybe BinaryBody). These will want to be shared by Star and CustomBody,
         # but probably won't be shared by disk/ring-type objects
 
         # Let's remember the component number of this star in the parent orbit
@@ -666,7 +661,7 @@ class Body(object):
         self.masses = masses
         self.ecc = ecc
 
-        # compute q: notice that since we always do sibling_mass/self_mass, this
+        # compute q: note that, since we always do sibling_mass/self_mass, this
         # will automatically invert the value of q for the secondary component
         sibling_mass = self._get_mass_by_index(self.ind_sibling)
         self_mass = self._get_mass_by_index(self.ind_self)
@@ -710,7 +705,7 @@ class Body(object):
         TODO: add documentation
         """
         # if not self._mesh:
-            # self._mesh = self.get_standard_mesh(scaled=True)
+        #     self._mesh = self.get_standard_mesh(scaled=True)
 
         # NOTE: self.mesh is the SCALED mesh PLACED in orbit at the current
         # time (self.time).  If this isn't available yet, self.mesh will
@@ -790,7 +785,7 @@ class Body(object):
             return coords_array[index]
 
     def _offset_mesh(self, new_mesh):
-        if self.do_mesh_offset and self.mesh_method=='marching':
+        if self.do_mesh_offset and self.mesh_method == 'marching':
             # vertices directly from meshing are placed directly on the
             # potential, causing the volume and surface area to always
             # (for convex surfaces) be underestimated.  Now let's jitter
@@ -831,18 +826,18 @@ class Body(object):
         TODO: add documentation
         """
         # TODO: allow this to take theta or separation
-        theta=0.0
+        theta = 0.0
 
         self._standard_meshes[theta] = protomesh.copy()
 
         # if theta==0.0:
-            # then this is when the object could be most inflated, so let's
-            # store the maximum distance to a triangle.  This is then used to
-            # conservatively and efficiently estimate whether an eclipse is
-            # possible at any given combination of positions
-            # mesh = self.get_standard_mesh(theta=0.0, scaled=True)
+        #     then this is when the object could be most inflated, so let's
+        #     store the maximum distance to a triangle.  This is then used to
+        #     conservatively and efficiently estimate whether an eclipse is
+        #     possible at any given combination of positions
+        #     mesh = self.get_standard_mesh(theta=0.0, scaled=True)
 
-            # self._max_r = np.sqrt(max([x**2+y**2+z**2 for x,y,z in mesh.centers]))
+        #     self._max_r = np.sqrt(max([x**2+y**2+z**2 for x,y,z in mesh.centers]))
 
     def has_standard_mesh(self):
         """
@@ -859,7 +854,7 @@ class Body(object):
         """
         # TODO: allow this to take etheta and retreive a mesh at that true anomaly
         theta = 0.0
-        protomesh = self._standard_meshes[theta] #.copy() # if theta in self._standard_meshes.keys() else self.mesh.copy()
+        protomesh = self._standard_meshes[theta]  #.copy() # if theta in self._standard_meshes.keys() else self.mesh.copy()
 
         if scaled:
             # TODO: be careful about self._scale... we may want self._instantaneous_scale
@@ -871,9 +866,9 @@ class Body(object):
 
     def reset(self, force_remesh=False, force_recompute_instantaneous=False):
         if force_remesh:
-            logger.debug("{}.reset: forcing remesh and recompute_instantaneous for next iteration".format(self.component))
+            logger.debug(f"{self.component}.reset: forcing remesh and recompute_instantaneous for next iteration")
         elif force_recompute_instantaneous:
-            logger.debug("{}.reset: forcing recompute_instantaneous for next iteration".format(self.component))
+            logger.debug(f"{self.component}.reset: forcing recompute_instantaneous for next iteration")
 
         if self.needs_remesh or force_remesh:
             self._mesh = None
@@ -1067,10 +1062,10 @@ class Body(object):
         if kind in ['mesh', 'orb']:
             return
 
-        if time==self.time and dataset in self.populated_at_time and 'pblum' not in kind:
+        if time == self.time and dataset in self.populated_at_time and 'pblum' not in kind:
             # then we've already computed the needed columns
 
-            # TODO: handle the case of intensities already computed by
+            # TODO: handle the case of intensities already computed by a
             # /different/ dataset (ie RVs computed first and filling intensities
             # and then lc requesting intensities with SAME passband/atm)
             return
@@ -1078,15 +1073,14 @@ class Body(object):
         new_mesh_cols = getattr(self, '_populate_{}'.format(kind.lower()))(dataset, ignore_effects=ignore_effects, **kwargs)
 
         for key, col in new_mesh_cols.items():
-
             self.mesh.update_columns_dict({'{}:{}'.format(key, dataset): col})
 
         self.populated_at_time.append(dataset)
 
+
 class Star(Body):
     def __init__(self, component, comp_no, ind_self, ind_sibling, masses, ecc, incl,
                  long_an, t0, do_mesh_offset, mesh_init_phi,
-
                  atm, datasets, passband, intens_weighting,
                  extinct, Rv,
                  ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
@@ -1146,7 +1140,6 @@ class Star(Body):
         self.do_rv_grav = do_rv_grav
         self.features = features
 
-
     @classmethod
     def from_bundle(cls, b, component, compute=None,
                     datasets=[], **kwargs):
@@ -1171,11 +1164,10 @@ class Star(Body):
         if not len(hier.get_value()):
             raise NotImplementedError("Star meshing requires a hierarchy to exist")
 
-
         label_self = component
         label_sibling = hier.get_stars_of_sibling_of(component)
         label_orbit = hier.get_parent_of(component)
-        starrefs  = hier.get_stars()
+        starrefs = hier.get_stars()
 
         ind_self = starrefs.index(label_self)
         # for the sibling, we may need to handle a list of stars (ie in the case of a hierarchical triple)
@@ -1184,7 +1176,6 @@ class Star(Body):
 
         self_ps = b.filter(component=component, context='component', **_skip_filter_checks)
         requiv = self_ps.get_value(qualifier='requiv', unit=u.solRad, **_skip_filter_checks)
-
 
         masses = [b.get_value(qualifier='mass', component=star, context='component', unit=u.solMass, **_skip_filter_checks) for star in starrefs]
         if b.hierarchy.get_parent_of(component) is not None:
@@ -1212,7 +1203,7 @@ class Star(Body):
         t0 = b.get_value(qualifier='t0', context='system', unit=u.d, **_skip_filter_checks)
 
         teff = b.get_value(qualifier='teff', component=component, context='component', unit=u.K, **_skip_filter_checks)
-        gravb_bol= b.get_value(qualifier='gravb_bol', component=component, context='component', **_skip_filter_checks)
+        gravb_bol = b.get_value(qualifier='gravb_bol', component=component, context='component', **_skip_filter_checks)
 
         abun = b.get_value(qualifier='abun', component=component, context='component', **_skip_filter_checks)
         irrad_frac_refl = b.get_value(qualifier='irrad_frac_refl_bol', component=component, context='component', **_skip_filter_checks)
@@ -1373,7 +1364,7 @@ class Star(Body):
 
     @property
     def spots(self):
-        return [f for f in self.features if f.__class__.__name__=='Spot']
+        return [f for f in self.features if f.__class__.__name__ == 'Spot']
 
     @property
     def polar_direction_xyz(self):
@@ -1565,7 +1556,6 @@ class Star(Body):
             theta = 0.0
             self._standard_meshes[theta].update_columns(gravs=gravs)
 
-
     def _fill_teffs(self, mesh=None, ignore_effects=False, **kwargs):
         r"""
 
@@ -1749,7 +1739,6 @@ class Star(Body):
         cols = lc_cols
         cols['rvs'] = rvs
         return cols
-
 
     def _populate_lc(self, dataset, ignore_effects=False, **kwargs):
         """
@@ -2168,6 +2157,7 @@ class Star_roche(Star):
 
         return new_mesh, scale
 
+
 class Star_roche_envelope_half(Star):
     def __init__(self, component, comp_no, ind_self, ind_sibling,
                  masses, ecc, incl,
@@ -2375,7 +2365,6 @@ class Star_rotstar(Star):
     def __init__(self, component, comp_no, ind_self, ind_sibling,
                  masses, ecc, incl,
                  long_an, t0, do_mesh_offset, mesh_init_phi,
-
                  atm, datasets, passband, intens_weighting,
                  extinct, Rv,
                  ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
@@ -2388,7 +2377,6 @@ class Star_rotstar(Star):
                  mesh_method, is_single,
                  do_rv_grav,
                  features,
-
                  **kwargs):
         """
         """
@@ -2398,7 +2386,6 @@ class Star_rotstar(Star):
                                            masses, ecc, incl,
                                            long_an, t0,
                                            do_mesh_offset, mesh_init_phi,
-
                                            atm, datasets, passband, intens_weighting,
                                            extinct, Rv,
                                            ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
@@ -2414,15 +2401,8 @@ class Star_rotstar(Star):
                                            **kwargs)
 
     @classmethod
-    def from_bundle(cls, b, component, compute=None,
-                    datasets=[], **kwargs):
-
-
-        return super(Star_rotstar, cls).from_bundle(b, component, compute,
-                                                    datasets,
-                                                    **kwargs)
-
-
+    def from_bundle(cls, b, component, compute=None, datasets=[], **kwargs):
+        return super(Star_rotstar, cls).from_bundle(b, component, compute, datasets, **kwargs)
 
     @property
     def is_convex(self):
@@ -2432,7 +2412,7 @@ class Star_rotstar(Star):
     def needs_recompute_instantaneous(self):
         # recompute instantaneous for asynchronous spots, even if meshing
         # doesn't need to be recomputed
-        return self.needs_remesh or (len(self.features) and self.F != 1.0)
+        return self.needs_remesh or (not self.is_single and len(self.features) and self.F != 1)
 
     @property
     def needs_remesh(self):
@@ -2465,11 +2445,11 @@ class Star_rotstar(Star):
         logger.debug("{}.instantaneous_mesh_args".format(self.component))
 
         if 'mesh_args' not in self.inst_vals.keys():
-            logger.debug("{}.instantaneous_mesh_args COMPUTING".format(self.component))
+            logger.debug(f"{self.component}.instantaneous_mesh_args COMPUTING")
 
-            # TODO: we need a different scale if self._is_single==True
+            # TODO: we need a different scale if self.is_single==True
             freq_rot = self.freq_rot
-            omega = rotstar.rotfreq_to_omega(freq_rot, M_star = self.masses[self.ind_self], scale=self.sma, solar_units=True)
+            omega = rotstar.rotfreq_to_omega(freq_rot, M_star=self.masses[self.ind_self], scale=self.sma, solar_units=True)
 
             # polar_direction_xyz is instantaneous based on current true_anom
             s = self.polar_direction_xyz
@@ -2479,17 +2459,15 @@ class Star_rotstar(Star):
             # TODO: not sure if scaled should be True or False here
             target_volume = self.get_target_volume(scaled=False)
             logger.debug("libphoebe.rotstar_misaligned_Omega_at_vol(vol={}, omega={}, s={})".format(target_volume, omega, s))
-            Phi = libphoebe.rotstar_misaligned_Omega_at_vol(target_volume,
-                                                            omega, s)
+            Phi = libphoebe.rotstar_misaligned_Omega_at_vol(target_volume, omega, s)
 
             self.inst_vals['mesh_args'] = omega, s, Phi
 
         return self.inst_vals['mesh_args']
 
-
     def _build_mesh(self, mesh_method, **kwargs):
         """
-        this function takes mesh_method and kwargs that came from the generic Body.intialize_mesh and returns
+        this function takes mesh_method and kwargs that came from the generic Body.initialize_mesh and returns
         the grid... intialize mesh then takes care of filling columns and rescaling to the correct units, etc
         """
 
@@ -2508,21 +2486,23 @@ class Star_rotstar(Star):
             delta = _estimate_delta(ntriangles, av['larea'])
 
             try:
-                new_mesh = libphoebe.rotstar_misaligned_marching_mesh(*mesh_args,
-                                                                      delta=delta,
-                                                                      full=True,
-                                                                      max_triangles=int(ntriangles*1.5),
-                                                                      vertices=True,
-                                                                      triangles=True,
-                                                                      centers=True,
-                                                                      vnormals=True,
-                                                                      tnormals=True,
-                                                                      cnormals=False,
-                                                                      vnormgrads=True,
-                                                                      cnormgrads=False,
-                                                                      areas=True,
-                                                                      volume=True,
-                                                                      init_phi=kwargs.get('mesh_init_phi', self.mesh_init_phi))
+                new_mesh = libphoebe.rotstar_misaligned_marching_mesh(
+                    *mesh_args,
+                    delta=delta,
+                    full=True,
+                    max_triangles=int(ntriangles*1.5),
+                    vertices=True,
+                    triangles=True,
+                    centers=True,
+                    vnormals=True,
+                    tnormals=True,
+                    cnormals=False,
+                    vnormgrads=True,
+                    cnormgrads=False,
+                    areas=True,
+                    volume=True,
+                    init_phi=kwargs.get('mesh_init_phi', self.mesh_init_phi)
+                )
             except Exception as err:
                 if str(err) == 'There are too many triangles!':
                     mesh_init_phi_attempts = kwargs.get('mesh_init_phi_attempts', 1) + 1
@@ -2537,9 +2517,8 @@ class Star_rotstar(Star):
                 else:
                     raise err
 
-
             # In addition to the values exposed by the mesh itself, let's report
-            # the volume and surface area of the lobe.  The lobe area is used
+            # the volume and surface area of the lobe. The lobe area is used
             # if mesh_offseting is required, and the volume is optionally exposed
             # to the user.
             new_mesh['volume'] = av['lvolume']
@@ -3136,7 +3115,7 @@ class Spot(Feature):
             # syncpar = period_anom_orb / period_star
             period_anom_orb = orbit_ps.get_value(qualifier='period_anom', unit=u.d, **_skip_filter_checks)
             period_star = star_ps.get_value(qualifier='period', unit=u.d, **_skip_filter_checks)
-            dlongdt = 2*pi * (period_anom_orb/period_star - 1) / period_anom_orb
+            dlongdt = 2*np.pi * (period_anom_orb/period_star - 1) / period_anom_orb
         else:
             star_ps = b.get_component(component=feature_ps.component, **_skip_filter_checks)
             dlongdt = star_ps.get_value(qualifier='freq', unit=u.rad/u.d, **_skip_filter_checks)
