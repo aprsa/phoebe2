@@ -27,8 +27,13 @@ def test_binary(plot=False):
     if plot:
         print("fti off")
         print(abs(fluxes_legacy-fluxes).max())
-        plt.plot(times, fluxes_legacy, 'k-')
-        b.plot(show=True)
+        for i in range(len(fluxes)):
+            print(f'{i} {fluxes_legacy[i]} {fluxes[i]} {fluxes_legacy[i]/fluxes[i]}')
+        plt.plot(times, fluxes_legacy, 'r-', label='legacy')
+        plt.plot(times, fluxes, 'b-', label='phoebe')
+        plt.legend()
+        # b.plot(show=True)
+        plt.show()
     assert(np.allclose(fluxes, fluxes_legacy, rtol=0, atol=1e-3))
 
     b.run_compute(kind='phoebe', fti_method='oversample', fti_oversample=10)
