@@ -3,8 +3,6 @@ import numpy as np
 
 def test_reimport(filename=None):
 
-#import data
-
     if filename:
         b = phb2.from_legacy(filename)
     else:
@@ -38,9 +36,9 @@ def test_reimport(filename=None):
         if pars[x].qualifier not in ['times', 'fluxes', 'sigmas', 'rvs']:
             
             try:
-                assert(val1==val2)
+                assert val1 == val2
             except:
-                assert(all(val1==val2))
+                assert np.all(val1 == val2)
 
 
 

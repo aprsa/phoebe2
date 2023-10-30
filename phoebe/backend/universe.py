@@ -15,6 +15,8 @@ from phoebe import u
 from phoebe import c
 from phoebe import conf
 
+from cndpolator import ainfo
+
 import logging
 logger = logging.getLogger("UNIVERSE")
 logger.addHandler(logging.NullHandler())
@@ -343,7 +345,7 @@ class System(object):
             if body.mesh is None: continue
             abs_normal_intensities = passbands.Inorm_bol_bb(Teff=body.mesh.teffs.for_computations,
                                                             atm='blackbody',
-                                                            photon_weighted=False)
+                                                            intens_weighting='energy')
 
             fluxes_intrins_per_body.append(abs_normal_intensities * np.pi)
 
@@ -1088,6 +1090,7 @@ class Star(Body):
                  long_an, t0, do_mesh_offset, mesh_init_phi,
 
                  atm, datasets, passband, intens_weighting,
+                 blending_method, ld_blending_method,
                  extinct, Rv,
                  ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                  lp_profile_rest,
@@ -1126,6 +1129,8 @@ class Star(Body):
         self.gridsize = kwargs.get('gridsize', 90)                          # WD
         self.is_single = is_single
         self.atm = atm
+        self.blending_method = blending_method
+        self.ld_blending_method = ld_blending_method
 
         # DATSET-DEPENDENT DICTS
         self.passband = passband
@@ -1272,6 +1277,10 @@ class Star(Body):
         if isinstance(atm_override, dict):
             atm_override = atm_override.get(component, None)
         atm = b.get_value(qualifier='atm', compute=compute, component=component, atm=atm_override, **_skip_filter_checks) if compute is not None else atm_override if atm_override is not None else 'ck2004'
+        blending_method_override = kwargs.pop('blending_method', None)
+        blending_method = b.get_value(qualifier='blending_method', compute=compute, component=component, blending_method=blending_method_override, **_skip_filter_checks) if compute is not None else blending_method_override if blending_method_override is not None else 'linear'
+        ld_blending_method_override = kwargs.pop('ld_blending_method', None)
+        ld_blending_method = b.get_value(qualifier='ld_blending_method', compute=compute, component=component, ld_blending_method=ld_blending_method_override, **_skip_filter_checks) if compute is not None else ld_blending_method_override if ld_blending_method_override is not None else 'nearest'
         passband_override = kwargs.pop('passband', None)
         passband = {ds: b.get_value(qualifier='passband', dataset=ds, passband=passband_override, **_skip_filter_checks) for ds in datasets_intens}
         intens_weighting_override = kwargs.pop('intens_weighting', None)
@@ -1310,6 +1319,8 @@ class Star(Body):
                    datasets,
                    passband,
                    intens_weighting,
+                   blending_method,
+                   ld_blending_method,
                    extinct, Rv,
                    ld_mode,
                    ld_func,
@@ -1650,8 +1661,10 @@ class Star(Body):
         # abs_normal_intensities are directly out of the passbands module and are
         # emergent normal intensities in this dataset's passband/atm in absolute units
         abs_normal_intensities = self.mesh['abs_normal_intensities:{}'.format(dataset)].centers
+        # print(f'compute_luminosity: {abs_normal_intensities.shape=}')
 
         ldint = self.mesh['ldint:{}'.format(dataset)].centers
+        # print(f'compute_luminosity: {ldint.shape=}')
         ptfarea = self.get_ptfarea(dataset) # just a float
 
         # Our total integrated intensity in absolute units (luminosity) is now
@@ -1660,6 +1673,7 @@ class Star(Body):
         # limbdarkened as if they were at mu=1, and multiplied by their respective areas
 
         abs_luminosity = np.sum(abs_normal_intensities*areas*ldint)*ptfarea*np.pi
+        # print(f'compute_luminosity: {abs_luminosity=}')
 
         # NOTE: when this is computed the first time (for the sake of determining
         # pblum_scale), get_pblum_scale will return 1.0
@@ -1767,6 +1781,9 @@ class Star(Body):
         passband = kwargs.get('passband', self.passband.get(dataset, None))
         intens_weighting = kwargs.get('intens_weighting', self.intens_weighting.get(dataset, None))
         atm = kwargs.get('atm', self.atm)
+        atm_extrapolation_method = kwargs.get('blending_method', self.blending_method)
+        ld_extrapolation_method = kwargs.get('ld_blending_method', self.ld_blending_method)
+        blending_method = 'none' if atm_extrapolation_method == 'none' else 'blackbody'
         extinct = kwargs.get('extinct', self.extinct)
         Rv = kwargs.get('Rv', self.Rv)
         ld_mode = kwargs.get('ld_mode', self.ld_mode.get(dataset, None))
@@ -1819,75 +1836,90 @@ class Star(Body):
 
             self.set_ptfarea(dataset, ptfarea)
 
-            try:
-                ldint = pb.ldint(Teff=self.mesh.teffs.for_computations,
-                                 logg=self.mesh.loggs.for_computations,
-                                 abun=self.mesh.abuns.for_computations,
-                                 ldatm=ldatm,
-                                 ld_func=ld_func if ld_mode != 'interp' else ld_mode,
-                                 ld_coeffs=ld_coeffs,
-                                 photon_weighted=intens_weighting=='photon')
-            except ValueError as err:
-                if str(err).split(":")[0] == 'Atmosphere parameters out of bounds':
-                    # let's override with a more helpful error message
-                    logger.warning(str(err))
-                    if atm=='blackbody':
-                        raise ValueError("Could not compute ldint with ldatm='{}'.  Try changing ld_coeffs_source to a table that covers a sufficient range of values or set ld_mode to 'manual' and manually provide coefficients via ld_coeffs. Enable 'warning' logger to see out-of-bound arrays.".format(ldatm))
-                    else:
-                        if ld_mode=='interp':
-                            raise ValueError("Could not compute ldint with ldatm='{}'.  Try changing atm to a table that covers a sufficient range of values.  If necessary, set atm to 'blackbody' and/or ld_mode to 'manual' (in which case coefficients will need to be explicitly provided via ld_coeffs). Enable 'warning' logger to see out-of-bound arrays.".format(ldatm))
-                        elif ld_mode == 'lookup':
-                            raise ValueError("Could not compute ldint with ldatm='{}'.  Try changing atm to a table that covers a sufficient range of values.  If necessary, set atm to 'blackbody' and/or ld_mode to 'manual' (in which case coefficients will need to be explicitly provided via ld_coeffs). Enable 'warning' logger to see out-of-bound arrays.".format(ldatm))
-                        else:
-                            # manual... this means that the atm itself is out of bounds, so the only option is atm=blackbody
-                            raise ValueError("Could not compute ldint with ldatm='{}'.  Try changing atm to a table that covers a sufficient range of values.  If necessary, set atm to 'blackbody', ld_mode to 'manual', and provide coefficients via ld_coeffs. Enable 'warning' logger to see out-of-bound arrays.".format(ldatm))
-                else:
-                    raise err
+            query_pts = np.ascontiguousarray(np.stack((
+                self.mesh.teffs.for_computations,
+                self.mesh.loggs.for_computations,
+                self.mesh.abuns.for_computations
+            )).T)
 
-            try:
-                # abs_normal_intensities are the normal emergent passband intensities:
-                abs_normal_intensities = pb.Inorm(Teff=self.mesh.teffs.for_computations,
-                                                  logg=self.mesh.loggs.for_computations,
-                                                  abun=self.mesh.abuns.for_computations,
-                                                  atm=atm,
-                                                  ldatm=ldatm,
-                                                  ldint=ldint,
-                                                  photon_weighted=intens_weighting=='photon')
-            except ValueError as err:
-                if str(err).split(":")[0] == 'Atmosphere parameters out of bounds':
-                    # let's override with a more helpful error message
-                    logger.warning(str(err))
-                    raise ValueError("Could not compute intensities with atm='{}'.  Try changing atm to a table that covers a sufficient range of values (or to 'blackbody' in which case ld_mode will need to be set to 'manual' and coefficients provided via ld_coeffs).  Enable 'warning' logger to see out-of-bounds arrays.".format(atm))
-                else:
-                    raise err
+            ldint = pb.ldint(
+                query_pts=query_pts,
+                ldatm=ldatm,
+                ld_func=ld_func if ld_mode != 'interp' else ld_mode,
+                ld_coeffs=ld_coeffs,
+                intens_weighting=intens_weighting,
+                ld_extrapolation_method=ld_extrapolation_method,
+                raise_on_nans=True
+            ).flatten()
+
+            # print(f'{query_pts.shape=}')
+            # print(f'{ldint.shape=}')
+            # print(f'{ldint[:5,:]=}')
+            # [0.78913106 0.78944129 0.78953682 0.78953682 0.78944129]
+
+            abs_normal_intensities = pb.Inorm(
+                query_pts=query_pts,
+                atm=atm,
+                ldatm=ldatm,
+                ldint=ldint,
+                ld_func=ld_func,
+                ld_coeffs=ld_coeffs,
+                intens_weighting=intens_weighting,
+                atm_extrapolation_method=atm_extrapolation_method,
+                ld_extrapolation_method=ld_extrapolation_method,
+                blending_method=blending_method
+            ).flatten()
+
+            # print(abs_normal_intensities[:5])
+            # [4.14597115e+13 4.17244100e+13 4.18061229e+13 4.18061229e+13 4.17244100e+13]
+
+            query_pts = np.ascontiguousarray(np.stack((
+                self.mesh.teffs.for_computations,
+                self.mesh.loggs.for_computations,
+                self.mesh.abuns.for_computations,
+                np.abs(self.mesh.mus_for_computations),
+            )).T)
+            # print(f'{self.mesh.mus_for_computations=}')
+            # print(ainfo(query_pts))
 
             # abs_intensities are the projected (limb-darkened) passband intensities
             # TODO: why do we need to use abs(mus) here?
             # ! Because the interpolation within Imu will otherwise fail.
             # ! It would be best to pass only [visibilities > 0] elements to Imu.
-            abs_intensities = pb.Imu(Teff=self.mesh.teffs.for_computations,
-                                     logg=self.mesh.loggs.for_computations,
-                                     abun=self.mesh.abuns.for_computations,
-                                     mu=abs(self.mesh.mus_for_computations),
-                                     atm=atm,
-                                     ldatm=ldatm,
-                                     ldint=ldint,
-                                     ld_func=ld_func if ld_mode != 'interp' else ld_mode,
-                                     ld_coeffs=ld_coeffs,
-                                     photon_weighted=intens_weighting=='photon')
 
+            abs_intensities = pb.Imu(
+                query_pts=query_pts,
+                atm=atm,
+                ldatm=ldatm,
+                ldint=ldint,
+                ld_func=ld_func if ld_mode != 'interp' else ld_mode,
+                ld_coeffs=ld_coeffs,
+                intens_weighting=intens_weighting,
+                atm_extrapolation_method=atm_extrapolation_method,
+                ld_extrapolation_method=ld_extrapolation_method,
+                blending_method=blending_method
+            ).flatten()
+            # print(f'{abs_normal_intensities[:5]=}')
+
+            # for i in range(len(query_pts)):
+            #     print(f'{query_pts[i,0]} {query_pts[i,1]} {query_pts[i,2]} {query_pts[i,3]} {ldint[i]} {abs_normal_intensities[i]} {abs_intensities[i]}')
+            
+            # print(abs_intensities[:5])
+            # [4.29491526e+13 3.91889231e+13 3.91933678e+13 3.91954156e+13 3.91930293e+13]
 
             # Beaming/boosting
             if boosting_method == 'none' or ignore_effects:
                 boost_factors = 1.0
             elif boosting_method == 'linear':
                 logger.debug("calling pb.bindex for boosting_method='linear'")
-                bindex = pb.bindex(Teff=self.mesh.teffs.for_computations,
-                                   logg=self.mesh.loggs.for_computations,
-                                   abun=self.mesh.abuns.for_computations,
-                                   mu=abs(self.mesh.mus_for_computations),
-                                   atm=atm,
-                                   photon_weighted=intens_weighting=='photon')
+                bindex = pb.bindex(
+                    teffs=self.mesh.teffs.for_computations,
+                    loggs=self.mesh.loggs.for_computations,
+                    abuns=self.mesh.abuns.for_computations,
+                    mus=abs(self.mesh.mus_for_computations),
+                    atm=atm,
+                    intens_weighting=intens_weighting
+                )
 
                 boost_factors = 1.0 + bindex * self.mesh.velocities.for_computations[:,2]/37241.94167601236
             else:
@@ -1900,13 +1932,16 @@ class Star(Body):
             if extinct == 0.0:
                 extinct_factors = 1.0
             else:
-                extinct_factors = pb.interpolate_extinct(Teff=self.mesh.teffs.for_computations,
-                                                         logg=self.mesh.loggs.for_computations,
-                                                         abun=self.mesh.abuns.for_computations,
-                                                         extinct=extinct,
-                                                         Rv=Rv,
-                                                         atm=atm,
-                                                         photon_weighted=intens_weighting=='photon')
+                extinct_factors = pb.interpolate_extinct(
+                    teffs=self.mesh.teffs.for_computations,
+                    loggs=self.mesh.loggs.for_computations,
+                    abuns=self.mesh.abuns.for_computations,
+                    ebvs=extinct,
+                    rvs=Rv,
+                    atm=atm,
+                    intens_weighting=intens_weighting,
+                    extrapolation_method=atm_extrapolation_method
+                )
 
                 # extinction is NOT aspect dependent, so we'll correct both
                 # normal and directional intensities
@@ -1916,6 +1951,7 @@ class Star(Body):
             # Handle pblum - distance and l3 scaling happens when integrating (in observe)
             # we need to scale each triangle so that the summed normal_intensities over the
             # entire star is equivalent to pblum / 4pi
+            print(f'{self.get_pblum_scale(dataset)=}')
             normal_intensities = abs_normal_intensities * self.get_pblum_scale(dataset)
             intensities = abs_intensities * self.get_pblum_scale(dataset)
 
@@ -1946,6 +1982,7 @@ class Star_roche(Star):
                  long_an, t0, do_mesh_offset, mesh_init_phi,
 
                  atm, datasets, passband, intens_weighting,
+                 blending_method, ld_blending_method,
                  extinct, Rv,
                  ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                  lp_profile_rest,
@@ -1970,6 +2007,7 @@ class Star_roche(Star):
                                          do_mesh_offset, mesh_init_phi,
 
                                          atm, datasets, passband, intens_weighting,
+                                         blending_method, ld_blending_method,
                                          extinct, Rv,
                                          ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                                          lp_profile_rest,
@@ -2174,6 +2212,7 @@ class Star_roche_envelope_half(Star):
                  long_an, t0, do_mesh_offset, mesh_init_phi,
 
                  atm, datasets, passband, intens_weighting,
+                 blending_method, ld_blending_method,
                  extinct, Rv,
                  ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                  lp_profile_rest,
@@ -2202,6 +2241,7 @@ class Star_roche_envelope_half(Star):
                                          do_mesh_offset, mesh_init_phi,
 
                                          atm, datasets, passband, intens_weighting,
+                                         blending_method, ld_blending_method,
                                          extinct, Rv,
                                          ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                                          lp_profile_rest,
@@ -2377,6 +2417,7 @@ class Star_rotstar(Star):
                  long_an, t0, do_mesh_offset, mesh_init_phi,
 
                  atm, datasets, passband, intens_weighting,
+                 blending_method, ld_blending_method,
                  extinct, Rv,
                  ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                  lp_profile_rest,
@@ -2400,6 +2441,7 @@ class Star_rotstar(Star):
                                            do_mesh_offset, mesh_init_phi,
 
                                            atm, datasets, passband, intens_weighting,
+                                           blending_method, ld_blending_method,
                                            extinct, Rv,
                                            ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                                            lp_profile_rest,
@@ -2559,6 +2601,7 @@ class Star_sphere(Star):
                  long_an, t0, do_mesh_offset, mesh_init_phi,
 
                  atm, datasets, passband, intens_weighting,
+                 blending_method, ld_blending_method,
                  extinct, Rv,
                  ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                  lp_profile_rest,
@@ -2583,6 +2626,7 @@ class Star_sphere(Star):
                                           do_mesh_offset, mesh_init_phi,
 
                                           atm, datasets, passband, intens_weighting,
+                                          blending_method, ld_blending_method,
                                           extinct, Rv,
                                           ld_mode, ld_func, ld_coeffs, ld_coeffs_source,
                                           lp_profile_rest,
