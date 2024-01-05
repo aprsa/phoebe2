@@ -23,6 +23,13 @@ def remoteslurm(server, **kwargs):
     ----------
     * `crimpl_name` (string, optional): Name of server saved in crimpl.  Must be
         available on the local machine.  See docs for more details.
+    * `crimpl_env` (string, optional, default='conda'): server environment to use.
+        If 'none', no environment will be used. Conda and venv are supported.
+    * `env_dir` (string, optional, default='~/.venvs'): Directory on the server
+        that contains a venv environment. Only applicable if crimpl_env='venv'.
+    * `env_name` (string, optional, default='phoebe'): Name of the conda/venv
+        environment on the remote server. If it does not exist, it will be created.
+        Only applicable if crimpl_env != 'none'.
     * `use_conda` (bool, optional, default=True): Whether to use a conda environment
         on the server.  Jobs will fail if conda is not installed on the remote
         server if `use_conda=True`.
@@ -62,6 +69,9 @@ def remoteslurm(server, **kwargs):
     params = []
 
     params += [StringParameter(qualifier="crimpl_name", value=kwargs.get('crimpl_name', ''), description='Name of server saved in crimpl.  Must be available on the local machine.  See docs for more details.')]
+    params += [ChoiceParameter(qualifier='crimpl_env', value=kwargs.get('crimpl_env', 'conda'), choices=['none', 'conda', 'venv'], description='Server environment to use (none, conda or venv).')]
+    params += [StringParameter(qualifier='env_dir', visible_if='crimpl_env:venv', value=kwargs.get('env_dir', '~/.venvs'), description='Directory of the venv environment on the remote machine.')]
+    params += [StringParameter(qualifier='env_name', visible_if='crimpl_env:!none', value=kwargs.get('env_name', 'phoebe'), description='Name of the conda/venv environment on the remote machine. If it does not exist, it will be created.')]
     params += [BoolParameter(qualifier='use_conda', value=kwargs.get('use_conda', True), description='Whether to use a conda environment on the server.')]
     params += [StringParameter(visible_if='use_conda:true', qualifier='conda_env', value=kwargs.get('conda_env', 'default'), description='Name of conda environment on remote machine to run jobs.  Will be created if does not exist.')]
     params += [BoolParameter(visible_if='use_conda:true', qualifier='isolate_env', value=kwargs.get('isolate_env', False), advanced=True, description='Whether to clone the conda_env environment per-job.')]
@@ -95,6 +105,13 @@ def localthread(server, **kwargs):
     ----------
     * `crimpl_name` (string, optional): Name of server saved in crimpl.  Must be
         available on the local machine.  See docs for more details.
+    * `crimpl_env` (string, optional, default='conda'): server environment to use.
+        If 'none', no environment will be used. Conda and venv are supported.
+    * `env_dir` (string, optional, default='~/.venvs'): Directory on the server
+        that contains a venv environment. Only applicable if crimpl_env='venv'.
+    * `env_name` (string, optional, default='phoebe'): Name of the conda/venv
+        environment on the remote server. If it does not exist, it will be created.
+        Only applicable if crimpl_env != 'none'.
     * `use_conda` (bool, optional, default=False): Whether to use a conda environment
         for jobs running in the server directory.
     * `conda_env` (string, optional, default='default'): Name of conda
@@ -119,6 +136,9 @@ def localthread(server, **kwargs):
     params = []
 
     params += [StringParameter(qualifier='crimpl_name', value=kwargs.get('crimpl_name', ''), description='Name of server saved in crimpl.  If empty, a crimpl local thread server will be created in a \'crimpl\' subdirectory in the current working directory.')]
+    params += [ChoiceParameter(qualifier='crimpl_env', value=kwargs.get('crimpl_env', 'conda'), choices=['none', 'conda', 'venv'], description='Server environment to use (none, conda or venv).')]
+    params += [StringParameter(qualifier='env_dir', visible_if='crimpl_env:venv', value=kwargs.get('env_dir', '~/.venvs'), description='Directory of the venv environment on the remote machine.')]
+    params += [StringParameter(qualifier='env_name', visible_if='crimpl_env:!none', value=kwargs.get('env_name', 'phoebe'), description='Name of the conda/venv environment on the remote machine. If it does not exist, it will be created.')]
     params += [BoolParameter(qualifier='use_conda', value=kwargs.get('use_conda', False), description='Whether to use a conda environment on the server.')]
     params += [StringParameter(visible_if='use_conda:true', qualifier='conda_env', value=kwargs.get('conda_env', 'default'), description='Name of conda environment on remote machine to run jobs.  Will be created if does not exist.')]
     params += [BoolParameter(visible_if='use_conda:true', qualifier='isolate_env', value=kwargs.get('isolate_env', False), advanced=True, description='Whether to clone the conda_env environment per-job.')]

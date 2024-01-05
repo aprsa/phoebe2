@@ -6,9 +6,11 @@ import subprocess as _subprocess
 from . import common as _common
 from . import remotethread as _remotethread
 
+
 class RemoteSlurmJob(_remotethread.RemoteThreadJob):
     def __init__(self, server=None,
                  job_name=None,
+                 crimpl_env='none', env_dir='~/.venvs', env_name='phoebe',
                  conda_env=None, isolate_env=False,
                  nprocs=4,
                  slurm_id=None, connect_to_existing=None):
@@ -29,10 +31,18 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
             If not provided, one will be created from the current datetime and
             accessible through <RemoteSlurmJob.job_name>.  This `job_name` will
             be necessary to reconnect to a previously submitted job.
+        * `crimpl_env` (string, optional, default='none'): virtual environment
+            on the remote server; valid options are 'none', 'conda' and 'venv'.
+        * `env_dir` (string, optional, default='~/.venvs'): path to the venv
+            environment. Unlike conda, venv does not have a record of created
+            virtual environments so we need to pass the path. Only applicable
+            if crimpl_env='venv'.
+        * `env_name` (string, optional, default='phoebe'): name of the virtual
+            environment. Only applicable if crimpl_env != 'none'.
         * `conda_env` (string or None, optional, default=None): name of
             the conda environment to use for the job or False to not use a
             conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
+            if conda is installed on the server or to False otherwise. ***OBSOLETE***
         * `isolate_env` (bool, optional, default=False): whether to clone
             the `conda_env` for use in this job.  If True, any setup/installation
             done by this job will not affect the original environment and
@@ -40,7 +50,7 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
             (and therefore isolated) at the first call to <<class>.run_script>
             or <<class>.submit_script>.  Setup in the parent environment can
             be done at the server level, but requires passing `conda_env`.
-            Will raise an error if `isolate_env=True` and `conda_env=False`.
+            Will raise an error if `isolate_env=True` and `conda_env=False`. ***OBSOLETE***
         * `nprocs` (int, optional, default=4): default number of procs to use
             when calling <RemoteSlurmJob.submit_script>
         * `slurm_id` (int, optional, default=None): internal id of the remote
@@ -78,6 +88,7 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
         self._nprocs = nprocs
 
         super().__init__(server, job_name,
+                         crimpl_env=crimpl_env, env_dir=env_dir, env_name=env_name,
                          conda_env=conda_env,
                          isolate_env=isolate_env,
                          connect_to_existing=connect_to_existing)
@@ -396,8 +407,6 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
         self.server._run_server_cmd("echo {} > {}".format(self._slurm_id, _os.path.join(self.remote_directory, "crimpl_slurm_id")))
 
 
-
-
 class RemoteSlurmServer(_remotethread.RemoteThreadServer):
     _JobClass = RemoteSlurmJob
     def __init__(self, host, directory='~/crimpl', ssh='ssh', scp='scp',
@@ -476,9 +485,8 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
         """
         return self._run_server_cmd("sinfo")
 
-    def create_job(self, job_name=None,
-                   conda_env=None, isolate_env=False,
-                   nprocs=4):
+    def create_job(self, job_name=None, crimpl_env='none', env_dir='~/.venvs', env_name='phoebe',
+                   isolate_env=False, nprocs=4):
         """
         Create a child <RemoteSlurmJob> instance.
 
@@ -488,10 +496,14 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
             If not provided, one will be created from the current datetime and
             accessible through <RemoteSlurmJob.job_name>.  This `job_name` will
             be necessary to reconnect to a previously submitted job.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to use for the job or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
+        * `crimpl_env` (string, optional, default='none'): virtual environment
+            on the remote server; valid options are 'none', 'conda' and 'venv'.
+        * `env_dir` (string, optional, default='~/.venvs'): path to the venv
+            environment. Unlike conda, venv does not have a record of created
+            virtual environments so we need to pass the path. Only applicable
+            if crimpl_env='venv'.
+        * `env_name` (string, optional, default='phoebe'): name of the virtual
+            environment. Only applicable if crimpl_env != 'none'.
         * `isolate_env` (bool, optional, default=False): whether to clone
             the `conda_env` for use in this job.  If True, any setup/installation
             done by this job will not affect the original environment and
@@ -507,14 +519,15 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
         ---------
         * <RemoteSlurmJob>
         """
-        return self._JobClass(server=self, job_name=job_name,
-                              conda_env=conda_env,
+        return self._JobClass(server=self, job_name=job_name, crimpl_env=crimpl_env,
+                              env_dir=env_dir, env_name=env_name,
                               isolate_env=isolate_env,
                               nprocs=nprocs, connect_to_existing=False)
 
     def submit_job(self, script, files=[],
                    job_name=None, slurm_job_name=None,
-                   conda_env=None, isolate_env=False,
+                   crimpl_env='none', env_name=None, env_dir=None,
+                   isolate_env=False,
                    nprocs=4,
                    walltime='2-00:00:00',
                    mail_type='END,FAIL',
@@ -548,7 +561,9 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
         * <RemoteSlurmJob>
         """
         j = self.create_job(job_name=job_name,
-                            conda_env=conda_env,
+                            crimpl_env=crimpl_env,
+                            env_name=env_name,
+                            env_dir=env_dir,
                             isolate_env=isolate_env,
                             nprocs=nprocs)
 
@@ -562,9 +577,9 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
                                wait_for_job_status=wait_for_job_status,
                                trial_run=trial_run)
 
-    def run_script(self, script, files=[], conda_env=None, trial_run=False):
+    def run_script(self, script, files=[], crimpl_env='none', env_name=None, env_dir=None, trial_run=False):
         """
-        Run a script on the server in the `conda_env`, and wait for it to complete.
+        Run a script on the server in a virtual environment, and wait for it to complete.
 
         The files are copied and executed in <RemoteSlurmServer.directory> directly
         (whereas <RemoteSlurmJob> scripts are executed in subdirectories).
@@ -586,10 +601,14 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
         * `files` (list, optional, default=[]): list of paths to additional files
             to copy to the server required in order to successfully execute
             `script`.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to run the script or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
+        * `crimpl_env` (string, optional, default='none'): virtual environment
+            on the remote server; valid options are 'none', 'conda' and 'venv'.
+        * `env_dir` (string, optional, default='~/.venvs'): path to the venv
+            environment. Unlike conda, venv does not have a record of created
+            virtual environments so we need to pass the path. Only applicable
+            if crimpl_env='venv'.
+        * `env_name` (string, optional, default='phoebe'): name of the virtual
+            environment. Only applicable if crimpl_env != 'none'.
         * `trial_run` (bool, optional, default=False): if True, the commands
             that would be sent to the server are returned but not executed.
 
@@ -603,4 +622,4 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
         * TypeError: if `script` or `files` are not valid types.
         * ValueError: if the files referened by `script` or `files` are not valid.
         """
-        return super().run_script(script, files=files, conda_env=conda_env, trial_run=trial_run)
+        return super().run_script(script, files=files, crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir, trial_run=trial_run)

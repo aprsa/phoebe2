@@ -11319,17 +11319,22 @@ class Bundle(ParameterSet):
         crimpl_name = server_ps.get_value(qualifier='crimpl_name', crimpl_name=kwargs.get('crimpl_name', None), **_skip_filter_checks)
         f.write("crimpl_name = '{}'\n".format(crimpl_name))
 
+        crimpl_env = server_ps.get_value(qualifier='crimpl_env', crimpl_env=kwargs.get('crimpl_env', 'none'), **_skip_filter_checks)
+        f.write("crimpl_env = '{}'\n".format(crimpl_env))
+
+        if crimpl_env != 'none':
+            env_name = server_ps.get_value(qualifier='env_name', env_name=kwargs.get('env_name', 'phoebe'), **_skip_filter_checks)
+            f.write("env_name = '{}'\n".format(env_name))
+
+        if crimpl_env == 'venv':
+            env_dir = server_ps.get_value(qualifier='env_dir', env_name=kwargs.get('env_dir', 'phoebe'), **_skip_filter_checks)
+            f.write("env_dir = '{}'\n".format(env_dir))
+
         nprocs = server_ps.get_value(qualifier='nprocs', nprocs=kwargs.get('nprocs', None), **_skip_filter_checks)
         f.write("nprocs = {}\n".format(nprocs))
 
         use_mpi = server_ps.get_value(qualifier='use_mpi', use_mpi=kwargs.get('use_mpi', None), **_skip_filter_checks)
         f.write("use_mpi = {}\n".format(use_mpi))
-
-        use_conda = server_ps.get_value(qualifier='use_conda', use_conda=kwargs.get('use_conda', None), default=True, **_skip_filter_checks)
-        f.write("use_conda = {}\n".format(use_conda))
-
-        conda_env = server_ps.get_value(qualifier='conda_env', conda_env=kwargs.get('conda_env', None), **_skip_filter_checks)
-        f.write("conda_env = '{}'\n".format(conda_env))
 
         install_deps = server_ps.get_value(qualifier='install_deps', install_deps=kwargs.get('install_deps', None), **_skip_filter_checks)
         f.write("install_deps = {}\n".format(install_deps))
@@ -11337,7 +11342,7 @@ class Bundle(ParameterSet):
         job_name = _crimpl.common._new_job_name()
         f.write("job_name = '{}'\n".format(job_name))  # TODO: set this
 
-        server_options = self._get_server_options_dict(server=use_server, exclude_qualifiers=['use_conda', 'conda_env', 'nprocs', 'crimpl_name', 'use_mpi', 'install_deps'], **kwargs)
+        server_options = self._get_server_options_dict(server=use_server, exclude_qualifiers=['crimpl_env', 'env_name', 'env_dir', 'nprocs', 'crimpl_name', 'use_mpi', 'install_deps'], **kwargs)
         f.write("server_options = {}\n".format(server_options))
 
         f.write("\n\n")
@@ -11380,10 +11385,9 @@ class Bundle(ParameterSet):
         f.write("    script = ['printf \"{}\" > %s'.format(python_code.replace('\"', '\\\\\"')), 'sleep 2', run_cmd]\n\n" % (server_tmp_script))
 
         f.write("    if install_deps:\n")
-        f.write("        s.run_script(['pip install {}'], conda_env=conda_env if use_conda else False)\n\n".format(" ".join(deps_pip)))
+        f.write("        s.run_script(['pip install {}'], crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir)\n\n".format(" ".join(deps_pip)))
 
-        f.write("    sj = s.submit_job(script, ignore_files=['{}'], job_name=job_name, conda_env=conda_env if use_conda else False, **submit_job_kwargs)".format(server_tmp_script))
-
+        f.write("    sj = s.submit_job(script, ignore_files=['{}'], job_name=job_name, crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir, **submit_job_kwargs)".format(server_tmp_script))
 
         f.write("\n\n")
         f.write("elif action=='status':\n")
@@ -11757,8 +11761,8 @@ class Bundle(ParameterSet):
             if use_server != 'none':
                 server_options = self._get_server_options_dict(server=use_server, **kwargs)
             else:
-                # default to the LocalThreadServer in ./phoebe_crimpl_jobs without mpi and without conda
-                server_options = {'crimpl_name': '', 'use_mpi': False, 'use_conda': False, 'install_deps': False}
+                # default to the LocalThreadServer in ./phoebe_crimpl_jobs without mpi and without virtual environments:
+                server_options = {'crimpl_name': '', 'use_mpi': False, 'crimpl_env': 'none', 'env_name': None, 'env_dir': None, 'install_deps': False}
 
             # override terminate_on_complete if we're waiting
             if server_options.get('terminate_on_complete', False) and not detach:
@@ -11775,11 +11779,14 @@ class Bundle(ParameterSet):
             script_fname = os.path.abspath(script_fname)
 
             crimpl_name = server_options.pop('crimpl_name')
-            use_conda = server_options.pop('use_conda', True)
-            if not use_conda:
-                server_options['conda_env'] = False
+            
+            crimpl_env = server_options.pop('crimpl_env')
+            env_name = server_options.pop('env_name')
+            env_dir = server_options.pop('env_dir')
+            
             use_mpi = server_options.pop('use_mpi')
             install_deps = server_options.pop('install_deps')
+
             if crimpl_name:
                 if crimpl_name in _cached_crimpl_servers.keys():
                     s = _cached_crimpl_servers.get(crimpl_name)
@@ -11797,7 +11804,8 @@ class Bundle(ParameterSet):
                     deps_pip.append('mpi4py')
                 if ".dev" in __version__:
                     deps_pip.append('--ignore-installed')
-                s.run_script(['pip install {}'.format(" ".join(deps_pip))], conda_env=server_options.get('conda_env'))
+                
+                s.run_script(['pip install {}'.format(" ".join(deps_pip))], crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir)
 
             prefix = "mpirun " if use_mpi else ""
             if s.__class__.__name__ == 'LocalThreadServer':
@@ -11808,6 +11816,7 @@ class Bundle(ParameterSet):
 
             sj = s.submit_job(script=['{}python3 {}'.format(prefix, os.path.basename(script_fname))],
                               files=[script_fname],
+                              crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir,
                               **server_options)
 
             # create model job parameter and attach (and then return that instead of None)
@@ -12624,7 +12633,6 @@ class Bundle(ParameterSet):
         """
         kwargs['qualifier'] = 'detached_job'
         return self.get_parameter(twig=twig, **kwargs).load_progress(return_changes=return_changes)
-
 
     def kill_job(self, twig=None, load_progress=False, cleanup=True,
                    return_changes=False, **kwargs):
@@ -13552,8 +13560,8 @@ class Bundle(ParameterSet):
             if use_server != 'none':
                 server_options = self._get_server_options_dict(server=use_server, **{k:v for k,v in kwargs.items() if k not in ['server', 'use_server']})
             else:
-                # default to the LocalThreadServer in ./phoebe_crimpl_jobs without mpi and without conda
-                server_options = {'crimpl_name': '', 'use_mpi': False, 'use_conda': False, 'install_deps': False}
+                # default to the LocalThreadServer in ./phoebe_crimpl_jobs without mpi and without virtual environments:
+                server_options = {'crimpl_name': '', 'use_mpi': False, 'crimpl_env': 'none', 'env_name': None, 'env_dir': None, 'install_deps': False}
 
             # override terminate_on_complete if we're waiting
             if server_options.get('terminate_on_complete', False) and not detach:
@@ -13580,11 +13588,13 @@ class Bundle(ParameterSet):
 
             # TODO: cache servers
             crimpl_name = server_options.pop('crimpl_name')
-            use_conda = server_options.pop('use_conda', True)
-            if not use_conda:
-                server_options['conda_env'] = False
+            
+            crimpl_env = server_options.pop('crimpl_env', 'none')
+            env_name = server_options.pop('env_name')
+            env_dir = server_options.pop('env_dir')
             use_mpi = server_options.pop('use_mpi')
             install_deps = server_options.pop('install_deps')
+
             if crimpl_name:
                 if crimpl_name in _cached_crimpl_servers.keys():
                     s = _cached_crimpl_servers.get(crimpl_name)
@@ -13603,7 +13613,7 @@ class Bundle(ParameterSet):
                     deps_pip.append('mpi4py')
                 if ".dev" in __version__:
                     deps_pip.append('--ignore-installed')
-                s.run_script(['pip install {}'.format(" ".join(deps_pip))], conda_env=server_options.get('conda_env'))
+                s.run_script(['pip install {}'.format(" ".join(deps_pip))], crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir)
 
             prefix = "mpirun " if use_mpi else ""
             if s.__class__.__name__ == 'LocalThreadServer':
@@ -13614,12 +13624,11 @@ class Bundle(ParameterSet):
 
             sj = s.submit_job(script=['{}python3 {}'.format(prefix, os.path.basename(script_fname))],
                               files=[script_fname],
+                              crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir,
                               **server_options)
 
             # create model parameter and attach (and then return that instead of None)
-            job_param = JobParameter(self,
-                                     job_name=sj.job_name,
-                                     uniqueid=jobid)
+            job_param = JobParameter(self, job_name=sj.job_name, uniqueid=jobid)
 
             metawargs = {'context': 'solution', 'solution': solution, 'solver': solver, 'server': use_server if use_server!='none' else None}
             self._attach_params([job_param], check_copy_for=False, **metawargs)

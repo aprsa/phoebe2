@@ -334,8 +334,7 @@ class LocalThreadServer(_common.Server):
         """
         return self.server._run_server_cmd("ls")
 
-    def create_job(self, job_name=None,
-                   conda_env=None, isolate_env=False):
+    def create_job(self, job_name=None, crimpl_env='none', env_name=None, env_dir=None, isolate_env=False):
         """
         Create a child <LocalThreadJob> instance.
 
@@ -364,13 +363,16 @@ class LocalThreadServer(_common.Server):
         * <LocalThreadJob>
         """
         return self._JobClass(server=self, job_name=job_name,
-                              conda_env=conda_env,
+                              crimpl_env=crimpl_env,
+                              env_name=env_name,
+                              env_dir=env_dir,
                               isolate_env=isolate_env,
                               connect_to_existing=False)
 
     def submit_job(self, script, files=[],
                    job_name=None,
-                   conda_env=None, isolate_env=False,
+                   crimpl_env='none', env_name=None, env_dir=None,
+                   isolate_env=False,
                    ignore_files=[],
                    wait_for_job_status=False,
                    trial_run=False):
@@ -393,7 +395,9 @@ class LocalThreadServer(_common.Server):
         * <LocalThreadJob>
         """
         j = self.create_job(job_name=job_name,
-                            conda_env=conda_env,
+                            crimpl_env=crimpl_env,
+                            env_name=env_name,
+                            env_dir=env_dir,
                             isolate_env=isolate_env)
 
         return j.submit_script(script, files=files,

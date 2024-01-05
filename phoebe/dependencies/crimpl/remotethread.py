@@ -8,6 +8,7 @@ from . import common as _common
 class RemoteThreadJob(_common.ServerJob):
     def __init__(self, server=None,
                  job_name=None,
+                 crimpl_env='none', env_dir='~/.venvs', env_name='phoebe',
                  conda_env=None, isolate_env=False,
                  nprocs=None,
                  connect_to_existing=None):
@@ -31,10 +32,18 @@ class RemoteThreadJob(_common.ServerJob):
             If not provided, one will be created from the current datetime and
             accessible through <RemoteThreadJob.job_name>.  This `job_name` will
             be necessary to reconnect to a previously submitted job.
+        * `crimpl_env` (string, optional, default='none'): virtual environment
+            on the remote server; valid options are 'none', 'conda' and 'venv'.
+        * `env_dir` (string, optional, default='~/.venvs'): path to the venv
+            environment. Unlike conda, venv does not have a record of created
+            virtual environments so we need to pass the path. Only applicable
+            if crimpl_env='venv'.
+        * `env_name` (string, optional, default='phoebe'): name of the virtual
+            environment. Only applicable if crimpl_env != 'none'.
         * `conda_env` (string or None, optional, default=None): name of
             the conda environment to use for the job or False to not use a
             conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
+            if conda is installed on the server or to False otherwise. ***OBSOLETE***
         * `isolate_env` (bool, optional, default=False): whether to clone
             the `conda_env` for use in this job.  If True, any setup/installation
             done by this job will not affect the original environment and
@@ -42,7 +51,7 @@ class RemoteThreadJob(_common.ServerJob):
             (and therefore isolated) at the first call to <<class>.run_script>
             or <<class>.submit_script>.  Setup in the parent environment can
             be done at the server level, but requires passing `conda_env`.
-            Will raise an error if `isolate_env=True` and `conda_env=False`.
+            Will raise an error if `isolate_env=True` and `conda_env=False`. ***OBSOLETE***
         * `connect_to_existing` (bool, optional, default=None): NOT YET IMPLEMENTED
         """
         if connect_to_existing is None:
@@ -67,6 +76,7 @@ class RemoteThreadJob(_common.ServerJob):
                 raise ValueError("job_name={} already exists on {} server".format(job_name, server.server_name))
 
         super().__init__(server, job_name,
+                         crimpl_env=crimpl_env, env_dir=env_dir, env_name=env_name,
                          conda_env=conda_env,
                          isolate_env=isolate_env,
                          job_submitted=connect_to_existing)
@@ -242,9 +252,6 @@ class RemoteThreadJob(_common.ServerJob):
                                                                                           remote_script='crimpl_submit_script.sh'))
 
 
-
-
-
 class RemoteThreadServer(_common.SSHServer):
     _JobClass = RemoteThreadJob
     def __init__(self, host, directory='~/crimpl', ssh='ssh', scp='scp',
@@ -342,7 +349,7 @@ class RemoteThreadServer(_common.SSHServer):
         return "%s %s:{server_path} {local_path}" % (self.scp, self.host)
 
     def create_job(self, job_name=None,
-                   conda_env=None, isolate_env=False):
+                   crimpl_env='none', env_name=None, env_dir=None, isolate_env=False):
         """
         Create a child <RemoteThreadJob> instance.
 
@@ -371,13 +378,13 @@ class RemoteThreadServer(_common.SSHServer):
         * <RemoteThreadJob>
         """
         return self._JobClass(server=self, job_name=job_name,
-                              conda_env=conda_env,
+                              crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir,
                               isolate_env=isolate_env,
                               connect_to_existing=False)
 
     def submit_job(self, script, files=[],
                    job_name=None,
-                   conda_env=None, isolate_env=False,
+                   crimpl_env='none', env_name=None, env_dir=None, isolate_env=False,
                    ignore_files=[],
                    wait_for_job_status=False,
                    trial_run=False):
@@ -399,7 +406,9 @@ class RemoteThreadServer(_common.SSHServer):
         * <RemoteThreadJob>
         """
         j = self.create_job(job_name=job_name,
-                            conda_env=conda_env,
+                            crimpl_env=crimpl_env,
+                            env_name=env_name,
+                            env_dir=env_dir,
                             isolate_env=isolate_env)
 
         return j.submit_script(script, files=files,
@@ -407,7 +416,7 @@ class RemoteThreadServer(_common.SSHServer):
                                wait_for_job_status=wait_for_job_status,
                                trial_run=trial_run)
 
-    def run_script(self, script, files=[], conda_env=None, trial_run=False):
+    def run_script(self, script, files=[], crimpl_env='none', env_name=None, env_dir=None, trial_run=False):
         """
         Run a script on the server in the `conda_env`, and wait for it to complete.
 
@@ -431,10 +440,14 @@ class RemoteThreadServer(_common.SSHServer):
         * `files` (list, optional, default=[]): list of paths to additional files
             to copy to the server required in order to successfully execute
             `script`.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to run the script or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
+        * `crimpl_env` (string, optional, default='none'): virtual environment
+            on the remote server; valid options are 'none', 'conda' and 'venv'.
+        * `env_dir` (string, optional, default='~/.venvs'): path to the venv
+            environment. Unlike conda, venv does not have a record of created
+            virtual environments so we need to pass the path. Only applicable
+            if crimpl_env='venv'.
+        * `env_name` (string, optional, default='phoebe'): name of the virtual
+            environment. Only applicable if crimpl_env != 'none'.
         * `trial_run` (bool, optional, default=False): if True, the commands
             that would be sent to the server are returned but not executed.
 
@@ -451,7 +464,9 @@ class RemoteThreadServer(_common.SSHServer):
         cmds = self._submit_script_cmds(script, files, [],
                                         use_scheduler=False,
                                         directory=self.directory,
-                                        conda_env=conda_env,
+                                        crimpl_env=crimpl_env,
+                                        env_name=env_name,
+                                        env_dir=env_dir,
                                         isolate_env=False,
                                         job_name=None,
                                         terminate_on_complete=False,

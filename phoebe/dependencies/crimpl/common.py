@@ -114,6 +114,14 @@ class Server(object):
             return False
         return True
 
+    def venv_exists(self, env_name, env_dir):
+        venv_activation = _os.path.join(env_dir, env_name, 'bin/activate')
+        try:
+            self._run_server_cmd(f'ls {venv_activation}')
+        except _subprocess.CalledProcessError:
+            return False
+        return True
+
     def _get_conda_envs_dict(self, job_name=None):
         """
 
@@ -173,6 +181,30 @@ class Server(object):
         """
         return list(self._get_conda_envs_dict().keys())
 
+    def _create_crimpl_env(self, crimpl_env, env_name=None, env_dir=None, isolate_env=False, job_name=None, check_if_exists=True, run_cmd=True):
+        if crimpl_env == 'none':
+            # nothing to be done
+            return None, None
+        if crimpl_env == 'venv':
+            return self._create_venv(env_name, env_dir, check_if_exists=check_if_exists, run_cmd=run_cmd)
+        if crimpl_env == 'conda':
+            return self._create_conda_env(env_name, isolate_env=isolate_env, job_name=job_name, check_if_exists=check_if_exists, run_cmd=run_cmd)
+        raise ValueError(f'crimpl_env={crimpl_env} not supported.')
+
+    def _create_venv(self, env_name, env_dir, check_if_exists=True, run_cmd=True):
+        env_path = _os.path.join(env_dir, env_name)
+
+        if check_if_exists and self.venv_exists(env_name, env_dir):
+            # venv already exists, nothing to be done.
+            return None, env_path
+
+        cmd = f'python -m venv {env_path}'
+        
+        if run_cmd:
+            return self._run_server_cmd(cmd), env_path
+
+        return self.ssh_cmd.format(cmd), env_path
+
     def _create_conda_env(self, conda_env,
                           isolate_env=False,
                           job_name=None,
@@ -227,9 +259,7 @@ class Server(object):
         else:
             return self.ssh_cmd.format(cmd), envpath
 
-
     def _create_crimpl_directory(self):
-
         if self._directory_exists:
             return True
 
@@ -247,7 +277,6 @@ class Server(object):
 
         self._directory_exists = True
         return True
-
 
     def install_conda(self, in_server_directory=False):
         """
@@ -281,15 +310,16 @@ class Server(object):
     def _submit_script_cmds(self, script, files, ignore_files,
                             use_scheduler,
                             directory,
-                            conda_env, isolate_env,
+                            crimpl_env, env_name, env_dir,
+                            isolate_env,
                             job_name,
                             terminate_on_complete=False,
                             use_nohup=False,
                             install_conda=False,
                             **sched_kwargs):
 
-        if conda_env is False and isolate_env is True:
-            raise ValueError("cannot use isolate_env with conda_env=False")
+        if crimpl_env != 'conda' and isolate_env is True:
+            raise ValueError(f'cannot use isolate_env with crimpl_env={crimpl_env}.')
         # from job: self.server._submit_script_cmds(script, files, use_slurm, directory=self.remote_directory, conda_env=self.conda_env, isolate_env=self.isolate_env, job_name=self.job_name)
         # from server: self._submit_script_cmds(script, files, use_slurm=False, directory=self.directory, conda_env=conda_env, isolate_env=False, job_name=None)
 
@@ -310,10 +340,11 @@ class Server(object):
         #     if "conda" in line and "-y" not in line:
         #         script[i] = script[i] + " -y"
 
-        if install_conda:
-            self.install_conda(in_server_directory=True)
-        elif not self.conda_installed and conda_env is not False:
-            raise ValueError("conda is not installed on the remote server.  Install manually or call server.install_conda()")
+        if crimpl_env == 'conda':
+            if install_conda:
+                self.install_conda(in_server_directory=True)
+            elif not self.conda_installed:
+                raise ValueError("conda is not installed on the remote server. Please install manually or call server.install_conda().")
 
         def _slurm_kwarg_to_prefix(k):
             exceptions = {'nprocs': '-n ',
@@ -327,8 +358,11 @@ class Server(object):
             else:
                 return f"--{k}="
 
-
-        create_env_cmd, conda_env_path = self._create_conda_env(conda_env, isolate_env, job_name=job_name, check_if_exists=True, run_cmd=False)
+        # create_env_cmd, conda_env_path = self._create_conda_env(conda_env, isolate_env, job_name=job_name, check_if_exists=True, run_cmd=False)
+        create_env_cmd, env_path = self._create_crimpl_env(
+            crimpl_env, env_name=env_name, env_dir=env_dir,
+            isolate_env=isolate_env, job_name=job_name, check_if_exists=True,
+            run_cmd=False)
 
         if use_scheduler and job_name is None:
             raise ValueError("use_scheduler requires job_name")
@@ -342,12 +376,13 @@ class Server(object):
                 if use_scheduler == 'slurm':
                     sched_script += ["#SBATCH -D {}".format(directory+"/")]
                     sched_script += ["#SBATCH -J {}".format(job_name)]
-                    for k,v in sched_kwargs.items():
-                        if v is None: continue
+                    for k, v in sched_kwargs.items():
+                        if v is None:
+                            continue
                         prefix = _slurm_kwarg_to_prefix(k)
                         if prefix is False:
                             raise NotImplementedError("slurm command for {} not implemented".format(k))
-                        if k=='mail_type' and isinstance(v, list):
+                        if k == 'mail_type' and isinstance(v, list):
                             v = ",".join(v)
                         sched_script += ["#SBATCH {}{}".format(prefix, v)]
 
@@ -356,10 +391,11 @@ class Server(object):
 
                 orig_script = script
                 script = sched_script + ["\n\n", "echo \'starting\' > crimpl-job.status"]
-                if conda_env is not False:
-                    script += ["eval \"$(conda shell.bash hook)\"", "conda activate {}".format(conda_env_path)]
+                if crimpl_env == 'conda':
+                    script += ["eval \"$(conda shell.bash hook)\"", "conda activate {}".format(env_path)]
+                if crimpl_env == 'venv':
+                    script += [f'source {_os.path.join(env_path, "bin/activate")}']
                 script += ["echo \'running\' > crimpl-job.status"] + orig_script + ["echo \'complete\' > crimpl-job.status"]
-
 
             else:
                 # need to track status by writing to log file
@@ -371,16 +407,18 @@ class Server(object):
 
         # TODO: use tmp file instead
         script_fname = 'crimpl_submit_script.sh' if use_scheduler or use_nohup else 'crimpl_run_script.sh'
-        f = open(script_fname, 'w')
-        if not use_scheduler:
-            f.write("echo \'starting\' > crimpl-job.status\n")
-            if conda_env is not False:
-                f.write("eval \"$(conda shell.bash hook)\"\nconda activate {}\n".format(conda_env_path))
-        f.write("\n".join(script))
-        if terminate_on_complete:
-            # should really only be used for future AWS support
-            f.write("\nsudo shutdown now")
-        f.close()
+        with open(script_fname, 'w') as f:
+            if not use_scheduler:
+                f.write("echo \'starting\' > crimpl-job.status\n")
+                if crimpl_env == 'conda':
+                    f.write("eval \"$(conda shell.bash hook)\"\nconda activate {}\n".format(env_path))
+                if crimpl_env == 'venv':
+                    f.write(f'source {_os.path.join(env_path, "bin/activate")}\n')
+            f.write("\n".join(script))
+
+            if terminate_on_complete:
+                # should really only be used for future AWS support
+                f.write("\nsudo shutdown now")
 
         if not isinstance(files, list):
             raise TypeError("files must be of type list")
@@ -391,7 +429,7 @@ class Server(object):
         mkdir_cmd = self.ssh_cmd.format("mkdir -p {}".format(directory))
         if job_name is not None:
             logfiles_cmd = self.ssh_cmd.format("echo \'{}\' >> {}".format(" ".join([_os.path.basename(f) for f in files+ignore_files]), _os.path.join(directory, "crimpl-input-files.list"))) if len(files+ignore_files) else self.ssh_cmd.format("touch {}".format(_os.path.join(directory, "crimpl-input-files.list")))
-            logenv_cmd = self.ssh_cmd.format("echo \'{}\' > {}".format(conda_env, _os.path.join(directory, "crimpl-conda-environment")))
+            logenv_cmd = self.ssh_cmd.format("echo \'{}\' > {}".format(env_name, _os.path.join(directory, "crimpl-conda-environment")))
 
         # TODO: use job subdirectory for server_path
         scp_cmd = self.scp_cmd_to.format(local_path=" ".join([script_fname]+[_os.path.normpath(f).replace(' ', '\ ') for f in files]), server_path=directory+"/")
@@ -403,25 +441,22 @@ class Server(object):
         else:
             remote_script = "./"+script_fname
             if use_nohup:
-                cmd = self.ssh_cmd.format("cd {directory}; chmod +x {remote_script}; nohup bash {remote_script} 2> {remote_script}.err & echo $! > crimpl-nohup.pid".format(directory=directory,
-                                                                                                                                                          remote_script=remote_script,
-                                                                                                                                                          job_name=job_name if job_name is not None else "crimpl",
-                                                                                                                                                          conda_env_path=conda_env_path))
-
+                cmd = self.ssh_cmd.format(f"cd {directory}; chmod +x {remote_script}; nohup bash {remote_script} 2> {remote_script}.err & echo $! > crimpl-nohup.pid")
             else:
-                cmd = self.ssh_cmd.format("cd {directory}; chmod +x {remote_script}; {remote_script} 2> {remote_script}.err".format(directory=directory,
-                                                                                                                                   remote_script=remote_script))
+                cmd = self.ssh_cmd.format(f"cd {directory}; chmod +x {remote_script}; {remote_script} 2> {remote_script}.err")
         if job_name is not None:
             return [mkdir_cmd, scp_cmd, logfiles_cmd, logenv_cmd, create_env_cmd, cmd]
         else:
             return [mkdir_cmd, scp_cmd, create_env_cmd, cmd]
 
-    def create_job(self, job_name=None, conda_env=None, isolate_env=False):
+    def create_job(self, job_name=None, crimpl_env='none', env_name=None, env_dir=None, isolate_env=False):
         """
         """
         return self._JobClass(server=self,
                               job_name=job_name,
-                              conda_env=conda_env,
+                              crimpl_env=crimpl_env,
+                              env_name=env_name,
+                              env_dir=env_dir,
                               isolate_env=isolate_env,
                               connect_to_existing=False)
 
@@ -490,6 +525,7 @@ class Server(object):
 
 class ServerJob(object):
     def __init__(self, server, job_name=None,
+                 crimpl_env='none', env_dir='~/.venvs', env_name='phoebe',
                  conda_env=None, isolate_env=False,
                  job_submitted=False):
         self._server = server
@@ -497,6 +533,18 @@ class ServerJob(object):
         self._job_name = job_name
         self._job_submitted = job_submitted
 
+        crimpl_env_options = ['none', 'conda', 'venv']
+        if crimpl_env not in crimpl_env_options:
+            raise ValueError(f'crimpl_env={crimpl_env} is not in one of the supported options ({crimpl_env_options})')
+        self._crimpl_env = crimpl_env
+
+        if not isinstance(env_dir, str):
+            raise ValueError(f'env_dir should be a string (a path to the venv environment).')
+        self._env_dir = env_dir
+
+        if not isinstance(env_name, str) or (isinstance(env_name, str) and '/' in env_name):
+            raise ValueError(f'env_name should be a string that does not contain "/".')
+        self._env_name = env_name
 
         if not (isinstance(conda_env, str) or conda_env is None or conda_env is False):
             raise TypeError("conda_env must be a string or None")
@@ -509,7 +557,7 @@ class ServerJob(object):
         self._isolate_env = isolate_env
 
         # allow caching once the environment exists
-        self._conda_env_exists = False
+        self._crimpl_env_exists = False
 
         # allow for caching remote_directory
         self._remote_directory = None
@@ -531,6 +579,27 @@ class ServerJob(object):
         return self._server
 
     @property
+    def crimpl_env(self):
+        """
+        Type of the crimpl virtual environment.
+        """
+        return self._crimpl_env
+
+    @property
+    def env_dir(self):
+        """
+        Directory that hosts a venv virtual environment.
+        """
+        return self._env_dir
+
+    @property
+    def env_name(self):
+        """
+        Name of the remote virtual environment (conda or venv).
+        """
+        return self._env_name
+
+    @property
     def conda_env(self):
         """
         Name of the conda environment to use for any future calls
@@ -541,7 +610,7 @@ class ServerJob(object):
 
         See also:
 
-        * <class>.conda_env_exists>
+        * <class>.crimpl_env_exists>
         * <Server.conda_envs>
 
         Returns
@@ -572,17 +641,29 @@ class ServerJob(object):
         return self._isolate_env
 
     @property
-    def conda_env_exists(self):
-        """
-        Check whether <<class>.conda_env> exists on the remote machine.
+    def crimpl_env_exists(self):
+        if self._crimpl_env == 'none':
+            return True
 
-        Returns
-        ----------
-        * (bool)
+        if self._crimpl_env_exists:
+            return True
+        
+        if self._crimpl_env == 'conda':
+            self._crimpl_env_exists = self.conda_env in self.server.conda_envs
+
+        if self._crimpl_env == 'venv':
+            self._crimpl_env_exists = self.venv_exists(self.env_name, self.env_dir)
+
+        return self._crimpl_env_exists
+
+    def create_crimpl_env(self):
         """
-        if not self._conda_env_exists:
-            self._conda_env_exists = self.conda_env in self.server.conda_envs
-        return self._conda_env_exists
+        """
+        
+        if self.crimpl_env_exists:
+            return
+
+        return self.server._create_crimpl_env(check_if_exists=False)
 
     def create_conda_env(self):
         """
@@ -595,10 +676,10 @@ class ServerJob(object):
         and numpy by default.
 
         """
-        if self.conda_env_exists:
+        if self.crimpl_env_exists:
             return
 
-        return self.server._create_conda_env(conda_env, check_if_exists=False)
+        return self.server._create_crimpl_env(self.conda_env, check_if_exists=False)
 
     @property
     def job_name(self):
