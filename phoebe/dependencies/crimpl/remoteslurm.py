@@ -11,7 +11,7 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
     def __init__(self, server=None,
                  job_name=None,
                  crimpl_env='none', env_dir='~/.venvs', env_name='phoebe',
-                 conda_env=None, isolate_env=False,
+                 isolate_env=False,
                  nprocs=4,
                  slurm_id=None, connect_to_existing=None):
         """
@@ -39,18 +39,13 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
             if crimpl_env='venv'.
         * `env_name` (string, optional, default='phoebe'): name of the virtual
             environment. Only applicable if crimpl_env != 'none'.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to use for the job or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise. ***OBSOLETE***
         * `isolate_env` (bool, optional, default=False): whether to clone
-            the `conda_env` for use in this job.  If True, any setup/installation
+            the `env_name` for use in this job.  If True, any setup/installation
             done by this job will not affect the original environment and
             will not affect other jobs.  Note that the environment is cloned
             (and therefore isolated) at the first call to <<class>.run_script>
             or <<class>.submit_script>.  Setup in the parent environment can
-            be done at the server level, but requires passing `conda_env`.
-            Will raise an error if `isolate_env=True` and `conda_env=False`. ***OBSOLETE***
+            be done at the server level, but requires passing `env_name`.
         * `nprocs` (int, optional, default=4): default number of procs to use
             when calling <RemoteSlurmJob.submit_script>
         * `slurm_id` (int, optional, default=None): internal id of the remote
@@ -89,7 +84,6 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
 
         super().__init__(server, job_name,
                          crimpl_env=crimpl_env, env_dir=env_dir, env_name=env_name,
-                         conda_env=conda_env,
                          isolate_env=isolate_env,
                          connect_to_existing=connect_to_existing)
 
@@ -225,7 +219,7 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
 
     def run_script(self, script, files=[], trial_run=False):
         """
-        Run a script on the server in the <<class>.conda_env>,
+        Run a script on the server in the virtual environment,
         and wait for it to complete.
 
         This is useful for short installation/setup scripts that do not belong
@@ -264,6 +258,9 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
         return super().run_script(script, files=files, trial_run=trial_run)
 
     def submit_script(self, script, files=[],
+                      crimpl_env='none',
+                      env_name=None,
+                      env_dir=None,
                       slurm_job_name=None,
                       nprocs=None,
                       walltime='2-00:00:00',
@@ -274,7 +271,7 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
                       wait_for_job_status=False,
                       trial_run=False):
         """
-        Submit a script to the server in the <<class>.conda_env>.
+        Submit a script to the server in the virtual environment.
 
         This will copy `script` (modified with the provided slurm options) and
         `files` to <RemoteSlurmJob.remote_directory> on the remote server and
@@ -348,7 +345,9 @@ class RemoteSlurmJob(_remotethread.RemoteThreadJob):
         cmds = self.server._submit_script_cmds(script, files, ignore_files,
                                                use_scheduler='slurm',
                                                directory=self.remote_directory,
-                                               conda_env=self.conda_env,
+                                               crimpl_env=crimpl_env,
+                                               env_name=env_name,
+                                               env_dir=env_dir,
                                                isolate_env=self.isolate_env,
                                                job_name=slurm_job_name if slurm_job_name is not None and len(slurm_job_name) else self.job_name,
                                                terminate_on_complete=False,
@@ -505,13 +504,12 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
         * `env_name` (string, optional, default='phoebe'): name of the virtual
             environment. Only applicable if crimpl_env != 'none'.
         * `isolate_env` (bool, optional, default=False): whether to clone
-            the `conda_env` for use in this job.  If True, any setup/installation
+            the `env_name` for use in this job.  If True, any setup/installation
             done by this job will not affect the original environment and
             will not affect other jobs.  Note that the environment is cloned
             (and therefore isolated) at the first call to <<class>.run_script>
             or <<class>.submit_script>.  Setup in the parent environment can
-            be done at the server level, but requires passing `conda_env`.
-            Will raise an error if `isolate_env=True` and `conda_env=False`.
+            be done at the server level, but requires passing `env_name`.
         * `nprocs` (int, optional, default=4): default number of procs to use
             when calling <RemoteSlurmJob.submit_job>
 
@@ -545,7 +543,6 @@ class RemoteSlurmServer(_remotethread.RemoteThreadServer):
         * `files`: passed to <RemoteSlurmJob.submit_script>
         * `job_name`: passed to <RemoteSlurmServer.create_job>
         * `slurm_job_name`: passed to <RemoteSlurmJob.submit_script>
-        * `conda_env`: passed to <RemoteSlurmServer.create_job>
         * `isolate_env`: passed to <RemoteSlurmServer.create_job>
         * `nprocs`: passed to <RemoteSlurmServer.create_job>
         * `walltime`: passed to <RemoteSlurmJob.submit_script>

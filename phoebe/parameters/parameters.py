@@ -324,7 +324,7 @@ _forbidden_labels += ['datasets', 'models', 'components', 'contexts',
 
 # from server:
 _forbidden_labels += ['remoteslurm', 'awsec2', 'localthread',
-                      'crimpl_name', 'crimpl_env', 'env_name', 'env_dir', 'conda_env', 'isolate_env',
+                      'crimpl_name', 'crimpl_env', 'env_name', 'env_dir', 'isolate_env',
                       'nprocs', 'use_mpi',
                       'walltime', 'mail_user', 'mail_type', 'addl_slurm_kwargs',
                       'terminate_on_complete',

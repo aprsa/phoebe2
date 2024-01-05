@@ -9,7 +9,7 @@ class RemoteThreadJob(_common.ServerJob):
     def __init__(self, server=None,
                  job_name=None,
                  crimpl_env='none', env_dir='~/.venvs', env_name='phoebe',
-                 conda_env=None, isolate_env=False,
+                 isolate_env=False,
                  nprocs=None,
                  connect_to_existing=None):
         """
@@ -40,18 +40,14 @@ class RemoteThreadJob(_common.ServerJob):
             if crimpl_env='venv'.
         * `env_name` (string, optional, default='phoebe'): name of the virtual
             environment. Only applicable if crimpl_env != 'none'.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to use for the job or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise. ***OBSOLETE***
         * `isolate_env` (bool, optional, default=False): whether to clone
-            the `conda_env` for use in this job.  If True, any setup/installation
-            done by this job will not affect the original environment and
-            will not affect other jobs.  Note that the environment is cloned
-            (and therefore isolated) at the first call to <<class>.run_script>
-            or <<class>.submit_script>.  Setup in the parent environment can
-            be done at the server level, but requires passing `conda_env`.
-            Will raise an error if `isolate_env=True` and `conda_env=False`. ***OBSOLETE***
+            the `env_name` environment for use in this job.  If True, any
+            setup/installation done by this job will not affect the original
+            environment and will not affect other jobs.  Note that the
+            environment is cloned (and therefore isolated) at the first call to
+            <<class>.run_script> or <<class>.submit_script>.  Setup in the
+            parent environment can be done at the server level, but requires
+            passing `env_name`. Requires `crimpl_env='conda'`.
         * `connect_to_existing` (bool, optional, default=None): NOT YET IMPLEMENTED
         """
         if connect_to_existing is None:
@@ -77,7 +73,6 @@ class RemoteThreadJob(_common.ServerJob):
 
         super().__init__(server, job_name,
                          crimpl_env=crimpl_env, env_dir=env_dir, env_name=env_name,
-                         conda_env=conda_env,
                          isolate_env=isolate_env,
                          job_submitted=connect_to_existing)
 
@@ -101,10 +96,10 @@ class RemoteThreadJob(_common.ServerJob):
         self.server._run_server_cmd("kill -9 {}".format(self._pid))
         self.server._run_server_cmd("echo \'killed\' > {}/crimpl-job.status".format(self.remote_directory))
 
-    def run_script(self, script, files=[], trial_run=False):
+    def run_script(self, script, files=[], crimpl_env='none', env_name=None, env_dir=None, trial_run=False):
         """
-        Run a script on the server in the <<class>.conda_env>,
-        and wait for it to complete.
+        Run a script on the server in the virtual environment, and wait for it
+        to complete.
 
         This is useful for short installation/setup scripts that do not belong
         in the scheduled job.
@@ -140,9 +135,11 @@ class RemoteThreadJob(_common.ServerJob):
         * ValueError: if the files referened by `script` or `files` are not valid.
         """
         cmds = self.server._submit_script_cmds(script, files, [],
+                                               crimpl_env=crimpl_env,
+                                               env_name=env_name,
+                                               env_dir=env_dir,
                                                use_scheduler=False,
                                                directory=self.remote_directory,
-                                               conda_env=self.conda_env,
                                                isolate_env=self.isolate_env,
                                                job_name=None,
                                                terminate_on_complete=False,
@@ -159,12 +156,13 @@ class RemoteThreadJob(_common.ServerJob):
         return
 
     def submit_script(self, script, files=[],
+                      crimpl_env='none', env_name=None, env_dir=None,
                       nprocs=None,
                       ignore_files=[],
                       wait_for_job_status=False,
                       trial_run=False):
         """
-        Submit a script to the server in the <<class>.conda_env>.
+        Submit a script to the server in the virtual environment.
 
         This will copy `script` (modified with the provided slurm options) and
         `files` to <RemoteThreadJob.remote_directory> on the remote server and
@@ -209,9 +207,11 @@ class RemoteThreadJob(_common.ServerJob):
             raise ValueError("job already submitted.  Create a new job or call resubmit_job")
 
         cmds = self.server._submit_script_cmds(script, files, ignore_files,
+                                               crimpl_env=crimpl_env,
+                                               env_name=env_name,
+                                               env_dir=env_dir,
                                                use_scheduler=False,
                                                directory=self.remote_directory,
-                                               conda_env=self.conda_env,
                                                isolate_env=self.isolate_env,
                                                job_name=self.job_name,
                                                use_nohup=True,
@@ -359,19 +359,13 @@ class RemoteThreadServer(_common.SSHServer):
             If not provided, one will be created from the current datetime and
             accessible through <RemoteThreadJob.job_name>.  This `job_name` will
             be necessary to reconnect to a previously submitted job.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to use for the job or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
         * `isolate_env` (bool, optional, default=False): whether to clone
-            the `conda_env` for use in this job.  If True, any setup/installation
+            the environment for use in this job.  If True, any setup/installation
             done by this job will not affect the original environment and
             will not affect other jobs.  Note that the environment is cloned
             (and therefore isolated) at the first call to <<class>.run_script>
             or <<class>.submit_script>.  Setup in the parent environment can
-            be done at the server level, but requires passing `conda_env`.
-            Will raise an error if `isolate_env=True` and `conda_env=False`.
-
+            be done at the server level, but requires passing `env_name`.
 
         Returns
         ---------
@@ -395,7 +389,6 @@ class RemoteThreadServer(_common.SSHServer):
         --------------
         * `script`: passed to <RemoteThreadJob.submit_script>
         * `files`: passed to <RemoteThreadJob.submit_script>
-        * `conda_env`: passed to <RemoteThreadServer.create_job>
         * `isolate_env`: passed to <RemoteThreadServer.create_job>
         * `ignore_files`: passed to <RemoteThreadJob.submit_script>
         * `wait_for_job_status`: passed to <RemoteThreadJob.submit_script>
@@ -418,7 +411,7 @@ class RemoteThreadServer(_common.SSHServer):
 
     def run_script(self, script, files=[], crimpl_env='none', env_name=None, env_dir=None, trial_run=False):
         """
-        Run a script on the server in the `conda_env`, and wait for it to complete.
+        Run a script on the server in the environment, and wait for it to complete.
 
         The files are copied and executed in <RemoteThreadServer.directory> directly
         (whereas <RemoteThreadJob> scripts are executed in subdirectories).

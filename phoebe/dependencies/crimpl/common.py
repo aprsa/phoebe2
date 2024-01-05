@@ -205,26 +205,26 @@ class Server(object):
 
         return self.ssh_cmd.format(cmd), env_path
 
-    def _create_conda_env(self, conda_env,
+    def _create_conda_env(self, env_name,
                           isolate_env=False,
                           job_name=None,
                           check_if_exists=True,
                           run_cmd=True):
         """
         """
-        if conda_env is False:
+        if env_name is False:
             return None, None
 
         default_deps = "pip numpy"
 
-        if not (isinstance(conda_env, str) or conda_env is None):
-            raise TypeError("conda_env must be a string or None")
+        if not (isinstance(env_name, str) or env_name is None):
+            raise TypeError("env_name must be a string or None")
 
-        if isinstance(conda_env, str) and "/" in conda_env:
-            raise ValueError("conda_env should be alpha-numeric (and -/_) only")
+        if isinstance(env_name, str) and "/" in env_name:
+            raise ValueError("env_name should be alpha-numeric (and -/_) only")
 
-        if conda_env is None:
-            conda_env = 'default'
+        if env_name is None:
+            env_name = 'default'
 
         python_version = ".".join(_sys.version.split()[0].split(".")[:-1])
         if isolate_env and job_name is not None:
@@ -232,26 +232,26 @@ class Server(object):
             conda_envs_dict = self._get_conda_envs_dict(job_name=job_name)
 
             cmd = ""
-            envpath_server = _os.path.join(self.directory, "crimpl-envs", conda_env)
-            envpath = _os.path.join(self.directory, "crimpl-job-{}".format(job_name), "crimpl-envs", conda_env)
+            envpath_server = _os.path.join(self.directory, "crimpl-envs", env_name)
+            envpath = _os.path.join(self.directory, "crimpl-job-{}".format(job_name), "crimpl-envs", env_name)
 
-            if conda_env not in conda_envs_dict.keys():
+            if env_name not in conda_envs_dict.keys():
                 # create the environment at the server level
                 cmd += "conda create -p {envpath_server} -y {default_deps} python={python_version}; ".format(envpath_server=envpath_server, default_deps=default_deps, python_version=python_version)
-            if len(cmd) or job_name not in conda_envs_dict.get(conda_env):
+            if len(cmd) or job_name not in conda_envs_dict.get(env_name):
                 # clone the server environment at the job level
                 cmd += "conda create -p {envpath} -y --clone {envpath_server};".format(envpath=envpath, envpath_server=envpath_server)
 
         else:
             if check_if_exists:
                 conda_envs_dict = self._get_conda_envs_dict(job_name=job_name)
-                if conda_env in conda_envs_dict.keys():
-                    return None, conda_envs_dict.get(conda_env)
+                if env_name in conda_envs_dict.keys():
+                    return None, conda_envs_dict.get(env_name)
             else:
                 conda_envs_dict = False
 
             # create the environment at the server level
-            envpath = _os.path.join(self.directory, "crimpl-envs", conda_env)
+            envpath = _os.path.join(self.directory, "crimpl-envs", env_name)
             cmd = "conda create -p {envpath} -y {default_deps} python>={python_version}".format(envpath=envpath, default_deps=default_deps, python_version=python_version)
 
         if run_cmd:
@@ -320,8 +320,8 @@ class Server(object):
 
         if crimpl_env != 'conda' and isolate_env is True:
             raise ValueError(f'cannot use isolate_env with crimpl_env={crimpl_env}.')
-        # from job: self.server._submit_script_cmds(script, files, use_slurm, directory=self.remote_directory, conda_env=self.conda_env, isolate_env=self.isolate_env, job_name=self.job_name)
-        # from server: self._submit_script_cmds(script, files, use_slurm=False, directory=self.directory, conda_env=conda_env, isolate_env=False, job_name=None)
+        # from job: self.server._submit_script_cmds(script, files, use_slurm, directory=self.remote_directory, isolate_env=self.isolate_env, job_name=self.job_name)
+        # from server: self._submit_script_cmds(script, files, use_slurm=False, directory=self.directory, isolate_env=False, job_name=None)
 
         # NOTE: job_name here is used to identify IF a job and as the slurm job name, but is NOT necessary the job.job_name
         if isinstance(script, str):
@@ -358,7 +358,6 @@ class Server(object):
             else:
                 return f"--{k}="
 
-        # create_env_cmd, conda_env_path = self._create_conda_env(conda_env, isolate_env, job_name=job_name, check_if_exists=True, run_cmd=False)
         create_env_cmd, env_path = self._create_crimpl_env(
             crimpl_env, env_name=env_name, env_dir=env_dir,
             isolate_env=isolate_env, job_name=job_name, check_if_exists=True,
@@ -526,7 +525,7 @@ class Server(object):
 class ServerJob(object):
     def __init__(self, server, job_name=None,
                  crimpl_env='none', env_dir='~/.venvs', env_name='phoebe',
-                 conda_env=None, isolate_env=False,
+                 isolate_env=False,
                  job_submitted=False):
         self._server = server
 
@@ -545,12 +544,6 @@ class ServerJob(object):
         if not isinstance(env_name, str) or (isinstance(env_name, str) and '/' in env_name):
             raise ValueError(f'env_name should be a string that does not contain "/".')
         self._env_name = env_name
-
-        if not (isinstance(conda_env, str) or conda_env is None or conda_env is False):
-            raise TypeError("conda_env must be a string or None")
-        if isinstance(conda_env, str) and "/" in conda_env:
-            raise ValueError("conda_env should be alpha-numeric (and -/_) only")
-        self._conda_env = conda_env
 
         if not isinstance(isolate_env, bool):
             raise TypeError("isolate_env must be of type bool")
@@ -600,41 +593,6 @@ class ServerJob(object):
         return self._env_name
 
     @property
-    def conda_env(self):
-        """
-        Name of the conda environment to use for any future calls
-        to <<class>.run_script> or <<class>.submit_script>.
-
-        If the environment does not exist, it will be created during the next
-        call to <<class>.run_script> or <<class>.submit_script>.
-
-        See also:
-
-        * <class>.crimpl_env_exists>
-        * <Server.conda_envs>
-
-        Returns
-        -----------
-        * (str): name or path of the conda environment on the remote server.
-        """
-        if self._conda_env is None:
-            # determine if already stored in the remote directory
-            try:
-                response = self.server._run_server_cmd("cat {}".format(_os.path.join(self.remote_directory, "crimpl-conda-environment")))
-            except _subprocess.CalledProcessError as e:
-                if 'No such file or directory' in str(e):
-                    # then the cached file does not yet exist, so we'll default to 'default'
-                    self._conda_env = 'default'
-                    print("# crimpl: will use conda_env=\"default\"")
-                else:
-                    # leave self._conda_env at None
-                    pass
-            else:
-                self._conda_env = response.strip()
-
-        return self._conda_env
-
-    @property
     def isolate_env(self):
         """
         """
@@ -649,7 +607,7 @@ class ServerJob(object):
             return True
         
         if self._crimpl_env == 'conda':
-            self._crimpl_env_exists = self.conda_env in self.server.conda_envs
+            self._crimpl_env_exists = self.env_name in self.server.conda_envs
 
         if self._crimpl_env == 'venv':
             self._crimpl_env_exists = self.venv_exists(self.env_name, self.env_dir)
@@ -667,19 +625,16 @@ class ServerJob(object):
 
     def create_conda_env(self):
         """
-        Create a conda environment (in the <<Server>.remote_directory>) named
-        <<class>.conda_env>.
+        Create a conda environment `self.env_name` in the <<Server>.remote_directory>).
 
         This environment will be available to any jobs in this server and will
         be listed in <<Server>.conda_envs>.  The created environment will
-        use the same version of python as the local version and include pip
-        and numpy by default.
-
+        use the same version of python as the local version.
         """
         if self.crimpl_env_exists:
             return
 
-        return self.server._create_crimpl_env(self.conda_env, check_if_exists=False)
+        return self.server._create_crimpl_env(self.env_name, check_if_exists=False)
 
     @property
     def job_name(self):

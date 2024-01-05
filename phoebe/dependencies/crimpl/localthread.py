@@ -8,7 +8,8 @@ from . import common as _common
 class LocalThreadJob(_common.ServerJob):
     def __init__(self, server=None,
                  job_name=None,
-                 conda_env=None, isolate_env=False,
+                 crimpl_env='none', env_name=None, env_dir=None,
+                 isolate_env=False,
                  connect_to_existing=None):
         """
         Create and submit a job on a <LocalThreadServer>.
@@ -26,18 +27,14 @@ class LocalThreadJob(_common.ServerJob):
             If not provided, one will be created from the current datetime and
             accessible through <LocalThreadJob.job_name>.  This `job_name` will
             be necessary to reconnect to a previously submitted job.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to use for the job or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
+
         * `isolate_env` (bool, optional, default=False): whether to clone
-            the `conda_env` for use in this job.  If True, any setup/installation
+            the `env_name` for use in this job.  If True, any setup/installation
             done by this job will not affect the original environment and
             will not affect other jobs.  Note that the environment is cloned
             (and therefore isolated) at the first call to <<class>.run_script>
             or <<class>.submit_script>.  Setup in the parent environment can
-            be done at the server level, but requires passing `conda_env`.
-            Will raise an error if `isolate_env=True` and `conda_env=False`.
+            be done at the server level, but requires passing `env_name`.
         * `connect_to_existing` (bool, optional, default=None): NOT YET IMPLEMENTED
         """
         if connect_to_existing is None:
@@ -64,7 +61,7 @@ class LocalThreadJob(_common.ServerJob):
                 raise ValueError("job_name={} already exists on {} server".format(job_name, server.server_name))
 
         super().__init__(server, job_name,
-                         conda_env=conda_env,
+                         crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir,
                          isolate_env=isolate_env,
                          job_submitted=connect_to_existing)
 
@@ -99,9 +96,9 @@ class LocalThreadJob(_common.ServerJob):
         self.server._run_server_cmd("kill -9 {}".format(self.pid))
         self.server._run_server_cmd("echo \'killed\' > {}/crimpl-job.status".format(self.remote_directory))
 
-    def run_script(self, script, files=[], trial_run=False):
+    def run_script(self, script, files=[], crimpl_env='none', env_name=None, env_dir=None, trial_run=False):
         """
-        Run a script on the server in the <<class>.conda_env>,
+        Run a script on the server in the virtual environment,
         and wait for it to complete.
 
         This is useful for short installation/setup scripts that do not belong
@@ -140,7 +137,9 @@ class LocalThreadJob(_common.ServerJob):
         cmds = self.server._submit_script_cmds(script, files, [],
                                                use_scheduler=False,
                                                directory=self.remote_directory,
-                                               conda_env=self.conda_env,
+                                               crimpl_env=crimpl_env,
+                                               env_name=env_name,
+                                               env_dir=env_dir,
                                                isolate_env=self.isolate_env,
                                                job_name=None,
                                                use_nohup=False,
@@ -157,10 +156,11 @@ class LocalThreadJob(_common.ServerJob):
 
     def submit_script(self, script, files=[],
                       ignore_files=[],
+                      crimpl_env='none', env_name=None, env_dir=None,
                       wait_for_job_status=False,
                       trial_run=False):
         """
-        Submit a script to the server in the <<class>.conda_env>.
+        Submit a script to the server in the virtual environment.
 
         This will copy `script` and `files` to <LocalThreadJob.remote_directory>
         in the server directory and run in a thread.
@@ -207,7 +207,9 @@ class LocalThreadJob(_common.ServerJob):
         cmds = self.server._submit_script_cmds(script, files, ignore_files,
                                                use_scheduler=False,
                                                directory=self.remote_directory,
-                                               conda_env=self.conda_env,
+                                               crimpl_env=crimpl_env,
+                                               env_name=env_name,
+                                               env_dir=env_dir,
                                                isolate_env=self.isolate_env,
                                                job_name=self.job_name,
                                                use_nohup=True,
@@ -344,19 +346,13 @@ class LocalThreadServer(_common.Server):
             If not provided, one will be created from the current datetime and
             accessible through <LocalThreadJob.job_name>.  This `job_name` will
             be necessary to reconnect to a previously submitted job.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to use for the job or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
         * `isolate_env` (bool, optional, default=False): whether to clone
-            the `conda_env` for use in this job.  If True, any setup/installation
+            the `env_name` for use in this job.  If True, any setup/installation
             done by this job will not affect the original environment and
             will not affect other jobs.  Note that the environment is cloned
             (and therefore isolated) at the first call to <<class>.run_script>
             or <<class>.submit_script>.  Setup in the parent environment can
-            be done at the server level, but requires passing `conda_env`.
-            Will raise an error if `isolate_env=True` and `conda_env=False`.
-
+            be done at the server level, but requires passing `env_name`.
 
         Returns
         ---------
@@ -384,7 +380,6 @@ class LocalThreadServer(_common.Server):
         * `script`: passed to <LocalThreadJob.submit_script>
         * `files`: passed to <LocalThreadJob.submit_script>
         * `job_name`: passed to <LocalThreadServer.create_job>
-        * `conda_env`: passed to <LocalThreadServer.create_job>
         * `isolate_env`: passed to <LocalThreadServer.create_job>
         * `ignore_files`: passed to <LocalThreadJob.submit_script>
         * `wait_for_job_status`: passed to <LocalThreadJob.submit_script>
@@ -405,9 +400,9 @@ class LocalThreadServer(_common.Server):
                                wait_for_job_status=wait_for_job_status,
                                trial_run=trial_run)
 
-    def run_script(self, script, files=[], conda_env=None, trial_run=False):
+    def run_script(self, script, files=[], crimpl_env='none', env_name=None, env_dir=None, trial_run=False):
         """
-        Run a script in the server directory in the `conda_env`, and wait for it to complete.
+        Run a script in the server directory in the `env_name`, and wait for it to complete.
 
         The files are copied and executed in <LocalThreadServer.directory> directly
         (whereas <LocalThreadJob> scripts are executed in subdirectories).
@@ -429,10 +424,6 @@ class LocalThreadServer(_common.Server):
         * `files` (list, optional, default=[]): list of paths to additional files
             to copy to the server directory required in order to successfully execute
             `script`.
-        * `conda_env` (string or None, optional, default=None): name of
-            the conda environment to run the script or False to not use a
-            conda environment.  If not passed or None, will default to 'default'
-            if conda is installed on the server or to False otherwise.
         * `trial_run` (bool, optional, default=False): if True, the commands
             that would be sent to the server are returned but not executed.
 
@@ -449,7 +440,9 @@ class LocalThreadServer(_common.Server):
         cmds = self._submit_script_cmds(script, files, [],
                                         use_scheduler=False,
                                         directory=self.directory,
-                                        conda_env=conda_env,
+                                        crimpl_env=crimpl_env,
+                                        env_name=env_name,
+                                        env_dir=env_dir,
                                         isolate_env=False,
                                         job_name=None,
                                         use_nohup=False,
