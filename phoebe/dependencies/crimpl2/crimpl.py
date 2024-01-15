@@ -177,8 +177,10 @@ class SlurmServer(CrimplServer):
         return job
 
 
-def list_servers():
-    return [conffile[:-5] for conffile in os.listdir(os.path.expanduser('~/.crimpl2/servers'))]
+def list_servers(server_dir='~/.crimpl2/servers'):
+    if os.path.exists(os.path.expanduser(server_dir)):
+        return [conffile[:-5] for conffile in os.listdir(os.path.expanduser(server_dir))]
+    return []
 
 
 def load_server(name):
