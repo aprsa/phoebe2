@@ -1,7 +1,6 @@
 
-# from time import sleep as _sleep
 import os as _os
-import subprocess as _subprocess
+from paramiko import SSHClient
 
 from . import common as _common
 
@@ -288,6 +287,19 @@ class RemoteThreadServer(_common.SSHServer):
 
         super().__init__(directory)
         self._dict_keys = ['host', 'directory', 'ssh', 'scp']
+
+    def connection_init(self):
+        if self.tunnel != None:
+            # the client has been initialized already.
+            return
+
+        self.tunnel = SSHClient()
+        self.tunnel.load_system_host_keys()
+        self.tunnel.connect(self.host)
+
+    def connection_close(self):
+        self.tunnel.close()
+        self.tunnel = None
 
     @property
     def ssh(self):

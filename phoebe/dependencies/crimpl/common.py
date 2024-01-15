@@ -2,6 +2,7 @@ from datetime import datetime as _datetime
 import os as _os
 import sys as _sys
 import subprocess as _subprocess
+import paramiko as _paramiko
 import json as _json
 from time import sleep as _sleep
 
@@ -10,10 +11,22 @@ __version__ = '0.2.0'
 def _new_job_name():
     return _datetime.now().strftime('%Y.%m.%d-%H.%M.%S')
 
-def _run_cmd(cmd, detach=False, log_cmd=True, allow_retries=True):
+def _run_cmd(cmd, tunnel=None, detach=False, log_cmd=True, allow_retries=True):
     if cmd is None:
         return
-    if log_cmd:  print("# crimpl{}: {}".format(" (detached)" if detach else "", cmd))
+    if log_cmd:
+        print("# crimpl{}: {}".format(" (detached)" if detach else "", cmd))
+
+    if tunnel is not None:
+        # use the initialized ssh client via paramiko.
+        _stdin, _stdout, _stderr = tunnel.exec_command(cmd)
+        err = _stderr.read().decode()
+        if err:
+            raise RuntimeError(err)
+        
+        cmd_output = _stdout.read().decode().strip()
+        return cmd_output
+
     i = 0
     while True:
         try:
@@ -41,6 +54,11 @@ class Server(object):
         self._directory_exists = False
 
         self._dict_keys = ['directory']
+
+        # Initialize an ssh tunnel placeholder; when needed, establish the connection by
+        # calling self.connection_init(). When done, call self.connection_close(). That
+        # will close the connection and set self.tunnel back to None.
+        self.tunnel = None
 
     def __repr__(self):
         def _format_val(v):
@@ -181,6 +199,14 @@ class Server(object):
         """
         return list(self._get_conda_envs_dict().keys())
 
+    def connection_init(self):
+        """ connection_init() must be implemented in the subclass. """
+        pass
+    
+    def connection_close(self):
+        """ connection_init() must be implemented in the subclass. """
+        pass
+
     def _create_crimpl_env(self, crimpl_env, env_name=None, env_dir=None, isolate_env=False, job_name=None, check_if_exists=True, run_cmd=True):
         if crimpl_env == 'none':
             # nothing to be done
@@ -263,17 +289,18 @@ class Server(object):
         if self._directory_exists:
             return True
 
-        try:
-            out = self._run_server_cmd("mkdir -p {directory}".format(directory=self.directory), exportpath=False)
-        except _subprocess.CalledProcessError:
-            return False
-        else:
-            # TODO: use temporary file
-            f = open('exportpath.sh', 'w')
-            f.write('export PATH="{}/crimpl-bin:$PATH"'.format(self.directory.replace("~", "$HOME")))
-            f.close()
-            scp_cmd = self.scp_cmd_to.format(local_path='exportpath.sh', server_path=self.directory+"/")
-            _run_cmd(scp_cmd)
+        stdout = _run_cmd(cmd=f'mkdir -p {self.directory}', tunnel=self.tunnel)
+        # try:
+        #     out = self._run_server_cmd("mkdir -p {directory}".format(directory=self.directory), exportpath=False)
+        # except _subprocess.CalledProcessError:
+        #     return False
+        # else:
+        #     # TODO: use temporary file
+        #     f = open('exportpath.sh', 'w')
+        #     f.write('export PATH="{}/crimpl-bin:$PATH"'.format(self.directory.replace("~", "$HOME")))
+        #     f.close()
+        #     scp_cmd = self.scp_cmd_to.format(local_path='exportpath.sh', server_path=self.directory+"/")
+        #     _run_cmd(scp_cmd)
 
         self._directory_exists = True
         return True
@@ -375,6 +402,7 @@ class Server(object):
                 if use_scheduler == 'slurm':
                     sched_script += ["#SBATCH -D {}".format(directory+"/")]
                     sched_script += ["#SBATCH -J {}".format(job_name)]
+
                     for k, v in sched_kwargs.items():
                         if v is None:
                             continue
@@ -385,6 +413,8 @@ class Server(object):
                             v = ",".join(v)
                         sched_script += ["#SBATCH {}{}".format(prefix, v)]
 
+                    if crimpl_env == 'venv':
+                        script += [f'source {_os.path.join(env_path, "bin/activate")}']
                 else:
                     raise NotImplementedError("use_scheduler={} not implemented".format(use_scheduler))
 
@@ -392,8 +422,6 @@ class Server(object):
                 script = sched_script + ["\n\n", "echo \'starting\' > crimpl-job.status"]
                 if crimpl_env == 'conda':
                     script += ["eval \"$(conda shell.bash hook)\"", "conda activate {}".format(env_path)]
-                if crimpl_env == 'venv':
-                    script += [f'source {_os.path.join(env_path, "bin/activate")}']
                 script += ["echo \'running\' > crimpl-job.status"] + orig_script + ["echo \'complete\' > crimpl-job.status"]
 
             else:
@@ -515,10 +543,10 @@ class Server(object):
         fname = _os.path.join(directory, "{}.json".format(name))
         if _os.path.exists(fname) and not overwrite:
             raise ValueError("server with name='{}' already exists at {}.  Use a different name or pass overwrite=True".format(name, fname))
-        f = open(fname, 'w')
-        json = self.to_dict()
-        _json.dump(json, f)
-        f.close()
+        with open(fname, 'w') as f:
+            json = self.to_dict()
+            _json.dump(json, f)
+
         return fname
 
 

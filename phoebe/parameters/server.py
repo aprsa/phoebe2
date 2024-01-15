@@ -5,9 +5,9 @@ from phoebe import conf
 
 ### NOTE: if creating new parameters, add to the _forbidden_labels list in parameters.py
 
-def remoteslurm(server, **kwargs):
+def slurm(server, **kwargs):
     """
-    Create a <phoebe.parameters.ParameterSet> for a remoteslurm server.
+    Create a <phoebe.parameters.ParameterSet> for a slurm server.
 
     The server referenced by `crimpl_name` must be configured on the local
     machine with [crimpl](http://crimpl.readthedocs.io).

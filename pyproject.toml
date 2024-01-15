@@ -71,6 +71,7 @@ dependencies = [
     "flask-socketio",
     "gevent",
     "gevent-websocket",
+    "paramiko",
 ]
 
 [project.urls]
@@ -106,6 +107,7 @@ packages = [
     "phoebe.dependencies.nparray",
     "phoebe.dependencies.distl",
     "phoebe.dependencies.crimpl",
+    "phoebe.dependencies.crimpl2",
     "phoebe.dependencies.unitsiau2015",
     "phoebe.dependencies.ligeor",
     "phoebe.dependencies.ligeor.ebai",

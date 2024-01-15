@@ -1,7 +1,6 @@
 
 # from time import sleep as _sleep
 import os as _os
-import subprocess as _subprocess
 
 from . import common as _common
 

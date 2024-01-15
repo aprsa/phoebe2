@@ -45,6 +45,7 @@ from phoebe.atmospheres.passbands import list_installed_passbands, list_online_p
 from phoebe import pool as _pool
 from phoebe.dependencies import distl as _distl
 from phoebe.dependencies import crimpl as _crimpl
+from phoebe.dependencies import crimpl2 as _crimpl2
 from phoebe.utils import _bytes, parse_json, _get_masked_times, _get_masked_compute_times
 from phoebe import helpers as _helpers
 import libphoebe
@@ -5137,7 +5138,7 @@ class Bundle(ParameterSet):
                                 False, []
                                 )
 
-        local_server_configs = _crimpl.list_servers()
+        local_server_configs = _crimpl2.list_servers()
         for server in servers:
             if server in ['compute', 'none']:
                 continue
@@ -5173,7 +5174,7 @@ class Bundle(ParameterSet):
                                     True, [])
 
             elif not allow_nonlocal_server:
-                crimpl_server_kind = _crimpl.load_server(crimpl_name).__class__.__name__.lower()[:-6]  # strip of "server"
+                crimpl_server_kind = _crimpl2.load_server(crimpl_name).__class__.__name__.lower()[:-6]  # strip of "server"
                 if server_kind != crimpl_server_kind:
                     report.add_item(self,
                                     "{} ({}) is a crimpl {} server, not a {} server".format(crimpl_name, crimpl_param.twig, crimpl_server_kind, server_kind),
@@ -9554,7 +9555,7 @@ class Bundle(ParameterSet):
                 return _crimpl.LocalThreadServer('./phoebe_crimpl_jobs')
             else:
                 return None
-        return _crimpl.load_server(crimpl_name)
+        return _crimpl2.load_server(crimpl_name)
 
     @send_if_client
     def remove_server(self, server, return_changes=False, **kwargs):
@@ -11339,15 +11340,15 @@ class Bundle(ParameterSet):
         install_deps = server_ps.get_value(qualifier='install_deps', install_deps=kwargs.get('install_deps', None), **_skip_filter_checks)
         f.write("install_deps = {}\n".format(install_deps))
 
-        job_name = _crimpl.common._new_job_name()
-        f.write("job_name = '{}'\n".format(job_name))  # TODO: set this
+        job_name = server_ps.get_value(qualifier='slurm_job_name', slurm_job_name=kwargs.get('slurm_job_name', None), **_skip_filter_checks)
+        f.write("job_name = '{}'\n".format(job_name))
 
-        server_options = self._get_server_options_dict(server=use_server, exclude_qualifiers=['crimpl_env', 'env_name', 'env_dir', 'nprocs', 'crimpl_name', 'use_mpi', 'install_deps'], **kwargs)
+        server_options = self._get_server_options_dict(server=use_server, exclude_qualifiers=['crimpl_env', 'env_name', 'env_dir', 'nprocs', 'crimpl_name', 'use_mpi', 'install_deps', 'slurm_job_name'], **kwargs)
         f.write("server_options = {}\n".format(server_options))
 
         f.write("\n\n")
         f.write("####### DO NOT EDIT BELOW THIS LINE #######\n\n")
-        f.write("try: from phoebe.dependencies import crimpl\nexcept ImportError:\n    try: import crimpl\n    except ImportError: raise ImportError('phoebe or crimpl required to submit script')\n")
+        f.write("try: from phoebe.dependencies import crimpl2\nexcept ImportError:\n    try: import crimpl2\n    except ImportError: raise ImportError('phoebe and crimpl2 required to submit script')\n")
         f.write("import sys\n\n")
         f.write("if len(sys.argv) != 2:\n")
         if autocontinue:
@@ -11356,8 +11357,8 @@ class Bundle(ParameterSet):
             f.write("    print('usage: {} [submit, status, wait, output, kill]'.format(sys.argv[0]))\n")
         f.write("    exit()\n")
         f.write("action = sys.argv[1]\n\n")
-        f.write("s = crimpl.load_server(crimpl_name) if crimpl_name else crimpl.LocalThreadServer('./phoebe_crimpl_jobs')\n\n")
-        f.write("if action=='submit':\n")
+        f.write("s = crimpl2.load_server(crimpl_name) if crimpl_name else crimpl2.CrimplServer(host='localhost', working_dir='./phoebe_crimpl_jobs')\n\n")
+        f.write("if action == 'submit':\n")
         f.write("    if job_name in s.existing_jobs:\n")
         if autocontinue:
             f.write("        print('job already submitted, to continue a previous run, use continue instead of submit')\n")
@@ -11458,8 +11459,8 @@ class Bundle(ParameterSet):
             self._write_crimpl_script(script_fname, script, use_server, deps_pip, False, kwargs)
         else:
             f = open(script_fname, 'w')
-            f.write("\n".join(script))
             f.write("\n# NOTE: this script only includes parameters needed to call the requested run_compute, edit manually with caution!\n")
+            f.write("\n".join(script))
             f.close()
 
         return script_fname, out_fname
@@ -11791,7 +11792,7 @@ class Bundle(ParameterSet):
                 if crimpl_name in _cached_crimpl_servers.keys():
                     s = _cached_crimpl_servers.get(crimpl_name)
                 else:
-                    s = _crimpl.load_server(crimpl_name)
+                    s = _crimpl2.load_server(crimpl_name)
                     _cached_crimpl_servers[crimpl_name] = s
             else:
                 s = _crimpl.LocalThreadServer('./phoebe_crimpl_jobs')
@@ -11814,7 +11815,7 @@ class Bundle(ParameterSet):
                 if use_mpi:
                     prefix = "mpirun -np {} ".format(nprocs)
 
-            sj = s.submit_job(script=['{}python3 {}'.format(prefix, os.path.basename(script_fname))],
+            sj = s.submit_job(server=s, script=os.path.basename(script_fname),
                               files=[script_fname],
                               crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir,
                               **server_options)
@@ -13599,7 +13600,7 @@ class Bundle(ParameterSet):
                 if crimpl_name in _cached_crimpl_servers.keys():
                     s = _cached_crimpl_servers.get(crimpl_name)
                 else:
-                    s = _crimpl.load_server(crimpl_name)
+                    s = _crimpl2.load_server(crimpl_name)
                     _cached_crimpl_servers[crimpl_name] = s
             else:
                 s = _crimpl.LocalThreadServer('./phoebe_crimpl_jobs')
@@ -13622,7 +13623,7 @@ class Bundle(ParameterSet):
                 if use_mpi:
                     prefix = "mpirun -np {} ".format(nprocs)
 
-            sj = s.submit_job(script=['{}python3 {}'.format(prefix, os.path.basename(script_fname))],
+            sj = s.submit_job(script=os.path.basename(script_fname),
                               files=[script_fname],
                               crimpl_env=crimpl_env, env_name=env_name, env_dir=env_dir,
                               **server_options)
