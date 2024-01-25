@@ -104,6 +104,7 @@ packages = [
     "phoebe.dependencies",
     "phoebe.dependencies.autofig",
     "phoebe.dependencies.nparray",
+    "phoebe.dependencies.dataquery",
     "phoebe.dependencies.distl",
     "phoebe.dependencies.crimpl",
     "phoebe.dependencies.unitsiau2015",
