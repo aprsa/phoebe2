@@ -1,4 +1,5 @@
 import phoebe
+import numpy as np
 
 
 class Query(object):
@@ -15,7 +16,7 @@ class GaiaQuery(Query):
     def login(self, username, password):
         pass
 
-    def download_data(self, dr3ids):
+    def download_data(self, dr3ids, save=False):
         record = self.query.load_data(ids=dr3ids, data_release='Gaia DR3', retrieval_type='EPOCH_PHOTOMETRY', data_structure='COMBINED')
         for datatype in record:
             entry = record[datatype][0].array
@@ -39,10 +40,12 @@ class GaiaQuery(Query):
                     lc['ferr'] = ferr[src_mask & flt_mask]
 
                     data[f'{src}:{flt}'] = lc
+                    if save:
+                        np.savetxt(fname=f'{src}.{flt}', X=np.vstack((lc['time'], lc['flux'], lc['ferr'])).T, fmt='%12.5f', header='time, flux, flux_error')
         return data
 
-    def add_datasets_to_bundle(self, bundle, dr3ids):
-        data = self.download_data(dr3ids=dr3ids)
+    def add_datasets_to_bundle(self, bundle, dr3ids, save=False):
+        data = self.download_data(dr3ids=dr3ids, save=save)
         for lcid, lc in data.items():
             source_id, filter = lcid.split(':')
             bundle.add_dataset('lc', times=lc['time'], fluxes=lc['flux'], sigmas=lc['ferr'], passband=f'Gaia:{filter}')
