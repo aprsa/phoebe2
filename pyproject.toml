@@ -58,11 +58,11 @@ classifiers = [
     "Topic :: Software Development :: User Interfaces"
 ]
 dependencies = [
-    "numpy",
+    "numpy < 2.0.0",
     "scipy",
     "astropy",
     "pytest",
-    "ndpolator == 1.2",
+    "ndpolator == 1.2.1",
     "tqdm",
     "corner",
     "requests",
@@ -80,7 +80,7 @@ repository = "https://github.com/phoebe-project/phoebe2"
 documentation = "http://phoebe-project.org/docs"
 
 [build-system]
-requires = ["setuptools", "numpy", "wheel"]
+requires = ["setuptools", "numpy < 2.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
