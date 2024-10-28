@@ -38,7 +38,7 @@ logger.addHandler(logging.NullHandler())
 
 # define the URL to query for online passbands.  See tables.phoebe-project.org
 # repo for the source-code of the server
-_url_tables_server = 'http://tables.phoebe-project.org'
+_url_tables_server = 'http://staging.phoebe-project.org'
 # comment out the following line if testing tables.phoebe-project.org server locally:
 # _url_tables_server = 'http://localhost:5555'
 
@@ -2192,7 +2192,8 @@ def list_passband_online_history(passband, since_installed=True):
         return {str(time.ctime()): "could not retrieve history entries"}
     else:
         try:
-            all_history = json.loads(resp.read().decode('utf-8'), object_pairs_hook=parse_json).get('passband_history', {}).get(passband, {})
+            history = json.loads(resp.read().decode('utf-8'), object_pairs_hook=parse_json).get('passband_history', {}).get(passband, {})
+            all_history = {entry[:24]: entry[25:].strip() for entry in history}
         except Exception as err:
             msg = "Parsing response from online passbands at {} failed.".format(_url_tables_server)
             msg += " Original error from json.loads: {} {}".format(err.__class__.__name__, str(err))
