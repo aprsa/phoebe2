@@ -2,7 +2,6 @@ from phoebe import __version__ as phoebe_version
 from phoebe import conf, mpi
 from phoebe.utils import _bytes
 from tqdm import tqdm
-from itertools import product
 
 import ndpolator
 
@@ -17,14 +16,13 @@ from astropy.table import Table
 import numpy as np
 from scipy import interpolate, integrate
 from scipy.optimize import curve_fit as cfit
-from datetime import datetime
+from datetime import datetime as dt
 import libphoebe
 import os
 import sys
 import glob
 import shutil
 import json
-import time
 import re
 
 # NOTE: python3 only
@@ -38,7 +36,7 @@ logger.addHandler(logging.NullHandler())
 
 # define the URL to query for online passbands.  See tables.phoebe-project.org
 # repo for the source-code of the server
-_url_tables_server = 'http://tables.phoebe-project.org'
+_url_tables_server = 'https://tables.phoebe-project.org'
 # comment out the following line if testing tables.phoebe-project.org server locally:
 # _url_tables_server = 'http://localhost:5555'
 
@@ -305,11 +303,22 @@ class Passband:
 
     def add_to_history(self, history, max_length=46):
         """
-        Adds a history entry to the passband file header.
+        Adds a history entry to the Passband instance.
 
         Parameters
         ----------
-        * `comment` (string, required): comment to be added to the passband header.
+        * `history` (string, required): comment to be added to the passband header.
+        * `max_length` (int, optional, default=46): maximum length of the history entry.
+        
+        Raises
+        ------
+        * ValueError: if the history entry is not a string.
+        * ValueError: if the history entry exceeds the maximum length.
+        
+        Examples
+        --------
+        >>> pb = phoebe.get_passband('Johnson:V')
+        >>> pb.add_to_history('passband updated.')
         """
 
         if not isinstance(history, str):
@@ -317,21 +326,34 @@ class Passband:
         if len(history) > max_length:
             raise ValueError(f'comment length should not exceed {max_length} characters.')
 
-        self.history.append(f'{time.ctime()}: {history}')
+        self.history.append(f'{_generate_timestamp()}: {history}')
 
-    def add_comment(self, comment):
+    def add_comment(self, comment, max_length=46):
         """
-        Adds a comment to the passband file header.
+        Adds a comment entry to the Passbands instance.
 
         Parameters
         ----------
         * `comment` (string, required): comment to be added to the passband header.
+        * `max_length` (int, optional, default=46): maximum length of the comment entry.
+        
+        Raises
+        ------
+        * ValueError: if the comment is not a string.
+        * ValueError: if the comment exceeds the maximum length.
+        
+        Examples
+        --------
+        >>> pb = phoebe.get_passband('Johnson:V')
+        >>> pb.add_comment('this is a comment.')
         """
 
         if not isinstance(comment, str):
             raise ValueError('passband header comments must be strings.')
+        if len(comment) > max_length:
+            raise ValueError(f'comment length should not exceed {max_length} characters.')
 
-        self.comments.append(comment)
+        self.comments.append(comment)                
 
     def on_updated_ptf(self, ptf, wlunits=u.AA, oversampling=1, ptf_order=3):
         """
@@ -380,7 +402,7 @@ class Passband:
         """
 
         # Timestamp is used for passband versioning.
-        timestamp = time.ctime() if update_timestamp else self.timestamp
+        timestamp = _generate_timestamp() if update_timestamp else self.timestamp
 
         header = fits.Header()
         header['PHOEBEVN'] = phoebe_version
@@ -1094,13 +1116,12 @@ class Passband:
         grid = self.ndp[atm].table['ld@photon'][1] if intens_weighting == 'photon' else self.ndp[atm].table['ld@energy'][1]
 
         if filename is not None:
-            import time
             f = open(filename, 'w')
-            f.write('# PASS_SET  %s\n' % self.pbset)
-            f.write('# PASSBAND  %s\n' % self.pbname)
+            f.write(f'# PASS_SET  {self.pbset}\n')
+            f.write(f'# PASSBAND  {self.pbname}\n')
             f.write('# VERSION   1.0\n\n')
-            f.write('# Exported from PHOEBE-2 passband on %s\n' % (time.ctime()))
-            f.write('# The coefficients are computed for the %s-weighted regime from %s atmospheres.\n\n' % (intens_weighting, atm))
+            f.write(f'# Exported from PHOEBE-2 passband on {_generate_timestamp()}\n')
+            f.write(f'# The coefficients are computed for the {intens_weighting}-weighted regime from {atm} atmospheres.\n\n')
 
         mods = np.loadtxt(models)
         for mod in mods:
@@ -1885,12 +1906,51 @@ class Passband:
             raise ValueError('Atmosphere parameters out of bounds: Teff=%s, logg=%s, abun=%s' % (Teff[nanmask], logg[nanmask], abun[nanmask]))
         return retval
 
+
+def _generate_timestamp():
+    """
+    Generates a timestamp string in the format 'YYYY-MM-DD HH:MM:SS'.
+
+    Returns
+    ----------
+    * (string) timestamp string
+    """
+
+    return dt.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _timestamp_to_dt(timestamp):
+    """
+    Converts a timestamp string to a datetime object.
+
+    Arguments
+    ----------
+    * `timestamp` (string): timestamp string in the format 'YYYY-MM-DD HH:MM:SS' or 'Mon Jan 01 00:00:00 2000'
+
+    Raises
+    ----------
+    * TypeError: if timestamp is not of type string
+    * ValueError: if timestamp is not in the correct format
+
+    Returns
+    ----------
+    * (datetime) datetime object
+    """
+
     if timestamp is None:
         return None
     elif not isinstance(timestamp, str):
         raise TypeError("timestamp not of type string")
-    return datetime.strptime(timestamp, "%a %b %d %H:%M:%S %Y")
+    try:
+        # if timestamp is in the new format, 'YYYY-MM-DD HH:MM:SS':
+        ts = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        # if timestamp is in the old format, 'Mon Jan 01 00:00:00 2000':
+        ts = dt.strptime(timestamp, "%a %b %d %H:%M:%S %Y")
+    else:
+        raise ValueError("timestamp not in the correct format")
+    
+    return ts
 
 def _init_passband(fullpath, check_for_update=True):
     """
@@ -2177,34 +2237,36 @@ def list_passband_online_history(passband, since_installed=True):
     ----------
     * (dict): dictionary with timestamps as keys and messages and values.
     """
-    if passband not in list_online_passbands(repeat_errors=False):
-        raise ValueError("'{}' passband not available online".format(passband))
 
-    url = '{}/pbs/history/{}?phoebe_version={}'.format(_url_tables_server, passband, phoebe_version)
+    if passband not in list_online_passbands(repeat_errors=False):
+        raise ValueError(f'{passband} passband not available online')
+
+    url = f'{_url_tables_server}/pbs/history/{passband}?phoebe_version={phoebe_version}'
 
     try:
         resp = urlopen(url, timeout=3)
     except Exception as err:
-        msg = "connection to online passbands at {} could not be established.  Check your internet connection or try again later.  If the problem persists and you're using a Mac, you may need to update openssl (see http://phoebe-project.org/help/faq).".format(_url_tables_server)
-        msg += " Original error from urlopen: {} {}".format(err.__class__.__name__, str(err))
+        msg = f"connection to online passbands at {_url_tables_server} could not be established.  Check your internet connection or try again later.  If the problem persists and you're using a Mac, you may need to update openssl (see http://phoebe-project.org/help/faq)."
+        msg += f" Original error from urlopen: {err.__class__.__name__} {str(err)}"
 
         logger.warning(msg)
-        return {str(time.ctime()): "could not retrieve history entries"}
+        return {_generate_timestamp(): "could not retrieve history entries"}
+
+    try:
+        print(resp.read().decode('utf-8'))
+        all_history = json.loads(resp.read().decode('utf-8'), object_pairs_hook=parse_json).get('passband_history', {}).get(passband, {})
+    except Exception as err:
+        msg = f"Parsing response from online passbands at {_url_tables_server} failed."
+        msg += f" Original error from json.loads: {err.__class__.__name__} {str(err)}"
+
+        logger.warning(msg)
+        return {_generate_timestamp(): "could not parse history entries"}
+
+    if since_installed:
+        installed_timestamp = _timestamp_to_dt(_pbtable.get(passband, {}).get('timestamp', None))
+        return {k:v for k,v in all_history.items() if installed_timestamp < _timestamp_to_dt(k)} if installed_timestamp is not None else all_history
     else:
-        try:
-            all_history = json.loads(resp.read().decode('utf-8'), object_pairs_hook=parse_json).get('passband_history', {}).get(passband, {})
-        except Exception as err:
-            msg = "Parsing response from online passbands at {} failed.".format(_url_tables_server)
-            msg += " Original error from json.loads: {} {}".format(err.__class__.__name__, str(err))
-
-            logger.warning(msg)
-            return {str(time.ctime()): "could not parse history entries"}
-
-        if since_installed:
-            installed_timestamp = _timestamp_to_dt(_pbtable.get(passband, {}).get('timestamp', None))
-            return {k:v for k,v in all_history.items() if installed_timestamp < _timestamp_to_dt(k)} if installed_timestamp is not None else all_history
-        else:
-            return all_history
+        return all_history
 
 def update_passband_available(passband, history_dict=False):
     """
