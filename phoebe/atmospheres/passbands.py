@@ -353,7 +353,7 @@ class Passband:
         if len(comment) > max_length:
             raise ValueError(f'comment length should not exceed {max_length} characters.')
 
-        self.comments.append(comment)                
+        self.comments.append(comment)
 
     def on_updated_ptf(self, ptf, wlunits=u.AA, oversampling=1, ptf_order=3):
         """
