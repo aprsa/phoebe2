@@ -36,7 +36,7 @@ logger.addHandler(logging.NullHandler())
 
 # define the URL to query for online passbands.  See tables.phoebe-project.org
 # repo for the source-code of the server
-_url_tables_server = 'https://tables.phoebe-project.org'
+_url_tables_server = 'https://staging.phoebe-project.org'
 # comment out the following line if testing tables.phoebe-project.org server locally:
 # _url_tables_server = 'http://localhost:5555'
 
@@ -1939,18 +1939,17 @@ def _timestamp_to_dt(timestamp):
 
     if timestamp is None:
         return None
-    elif not isinstance(timestamp, str):
+    if not isinstance(timestamp, str):
         raise TypeError("timestamp not of type string")
+
     try:
         # if timestamp is in the new format, 'YYYY-MM-DD HH:MM:SS':
-        ts = dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+        return dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
     except ValueError:
         # if timestamp is in the old format, 'Mon Jan 01 00:00:00 2000':
-        ts = dt.strptime(timestamp, "%a %b %d %H:%M:%S %Y")
+        return dt.strptime(timestamp, "%a %b %d %H:%M:%S %Y")
     else:
-        raise ValueError("timestamp not in the correct format")
-    
-    return ts
+        raise ValueError(f'timestamp "{timestamp}" not in the correct format')
 
 def _init_passband(fullpath, check_for_update=True):
     """
@@ -2252,9 +2251,37 @@ def list_passband_online_history(passband, since_installed=True):
         logger.warning(msg)
         return {_generate_timestamp(): "could not retrieve history entries"}
 
+    def _parse(entry):
+        # parses the history entry into a timestamp and message
+        parts = entry.split(':')
+
+        # try the new format first: 'YYYY-MM-DD HH:MM:SS'
+        for i in range(len(parts)-1, 0, -1):
+            try:
+                timestamp = ':'.join(parts[:i])
+                dt.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                message = ':'.join(parts[i:]).strip()
+                return timestamp, message
+            except ValueError:
+                continue
+
+        # try the old format: 'Mon Jan 01 00:00:00 2000'
+        for i in range(len(parts)-1, 0, -1):
+            try:
+                timestamp = ':'.join(parts[:i])
+                ts = dt.strptime(timestamp, "%a %b %d %H:%M:%S %Y")
+                # if successful, convert to the new format:
+                timestamp = ts.strftime('%Y-%m-%d %H:%M:%S')
+                message = ':'.join(parts[i:]).strip()
+                return timestamp, message
+            except ValueError:
+                continue
+
     try:
-        print(resp.read().decode('utf-8'))
         all_history = json.loads(resp.read().decode('utf-8'), object_pairs_hook=parse_json).get('passband_history', {}).get(passband, {})
+        # convert all_history to dict with timestamps as keys and messages as values:
+        all_history = dict([_parse(entry) for entry in all_history])
+
     except Exception as err:
         msg = f"Parsing response from online passbands at {_url_tables_server} failed."
         msg += f" Original error from json.loads: {err.__class__.__name__} {str(err)}"
