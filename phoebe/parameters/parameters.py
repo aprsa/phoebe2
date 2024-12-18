@@ -11924,9 +11924,18 @@ class ConstraintParameter(Parameter):
         def get_values(vars, safe_label=True, string_safe_arrays=False, use_distribution=None, needs_builtin=False):
             def _single_value(quantity, string_safe_arrays=False):
                 if isinstance(quantity, u.Quantity):
-                    v = u.to_solar(quantity).value if self.in_solar_units else quantity.si.value
-                    # cast to np.float64 so that dividing by zero will result in a np.inf
-                    v = v.astype(np.float64) if isinstance(v, np.ndarray) else np.float64(v)
+                    if self.in_solar_units:
+                        v = u.to_solar(quantity).value
+                    else:
+                        v = quantity.si.value
+
+                    if isinstance(v, np.ndarray):
+                        if v.size == 1:
+                            v = np.float64(v[0])  # Convert single-element arrays to scalar avoid DeprecationWarning: Conversion of an array with ndim > 0 to a scalar
+                        else:
+                            v = np.float64(v)
+                    else:
+                        v = np.float64(v)
 
                     if isinstance(v, np.ndarray) and string_safe_arrays:
                         v = v.tolist()
