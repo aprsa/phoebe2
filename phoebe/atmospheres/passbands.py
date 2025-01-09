@@ -16,7 +16,7 @@ from astropy.table import Table
 
 import numpy as np
 from scipy import interpolate, integrate
-from scipy.optimize import curve_fit as cfit
+from scipy.optimize import least_squares
 from datetime import datetime
 import libphoebe
 import os
@@ -81,6 +81,254 @@ if not os.path.exists(_pbdir_local):
         os.makedirs(_pbdir_local)
 
 _pbdir_env = os.getenv('PHOEBE_PBDIR', None)
+
+
+class ModelAtmosphere:
+    """
+    A parent class for handling model atmosphere data. Please note that only
+    derived classes should be instantiated.
+
+    Model atmospheres are approximations to stellar atmospheres. Each model
+    connects input parameters (for example, effective temperature, surface
+    gravity, and chemical abundances) to output parameters (for example,
+    intensities at different wavelengths and angles). The ModelAtmosphere
+    class provides a common interface for handling different model
+    atmospheres.
+
+    In order to have a model atmosphere supported, the following attributes
+    need to be defined:
+    
+    * `basic_axis_names` (list): names of the basic axes; basic axes are
+        axes that span the basic n-dimensional model atmosphere grid. The grid
+        can be sparsely populated, but it must be regular.
+    * `associated_axis_names` (list): names of the associated axes; associated
+        axes are axes that are not part of the basic grid, but are associated
+        with it. For example, the mus axis is associated with the basic grid
+        of teffs, loggs, and abuns. Associated axes must be fully defined in
+        all basic grid nodes.
+    * `mus` (array): specific angles, mu=cos(theta), where theta is the angle
+        between the observer and the surface normal.
+    * `wls` (array): wavelengths of the model atmosphere intensities.
+    * `units` (float): intensity unit conversion factor. The intensities are
+        usually given in erg/s/cm^2/A, which is converted to W/m^3 by
+        multiplying with this factor.
+    
+    In addition, the following methods need to or may be overloaded:
+    
+    * `parse_rules`: provides rules for parsing atmosphere fits filenames to
+        extract basic axis values.
+    * `limb_treatment`: defines how intensities at the exact limb (mu=0) should
+        be treated. By default, the intensities are linearly extrapolated to
+        mu=0.
+
+    When a model atmosphere is instantiated, the basic axes are populated with
+    unique values from the filenames of the atmosphere fits files. Associated axes
+    are populated from the fits file contents. The axes are then exported as
+    numpy arrays. The model atmosphere can also be extended with additional
+    associated axes (for example, `ebvs` and `rvs` for extincted intensities).
+
+    Attributes that are automatically populated:
+
+    * `models` (list): list of atmosphere fits files
+    * `nmodels` (int): number of atmosphere fits files
+    * `basic_axes` (tuple): tuple of numpy arrays for basic axes
+    * `associated_axes` (tuple): tuple of numpy arrays for associated axes
+    * `indices` (array): array of indices for all defined nodes in the model
+        atmosphere
+    * `[axis_name]` (array): numpy array for each axis, where the name is
+        automatically inferred from the basic and associated axis names
+
+    Arguments
+    ----------
+    * `atm` (string): common name of the model atmosphere
+    * `path` (string): relative or absolute path to data files
+    
+    Raises
+    -------
+    * `FileNotFoundError`: if the path does not exist
+    """
+
+    # default axes:
+    basic_axis_names = ['teffs', 'loggs', 'abuns']
+    associated_axis_names = ['mus']
+
+    def __init__(self, atm, path):
+        self.name = atm
+        self.path = path
+
+        try:
+            self.models = glob.glob(os.path.join(path, '*fits'))
+            self.nmodels = len(self.models)
+        except FileNotFoundError:
+            raise FileNotFoundError(f'path {path} does not exist.')
+
+        # initialize arrays for basic axes:
+        for name in self.basic_axis_names:
+            setattr(self, name, np.empty(self.nmodels))
+
+        # parse the filenames and populate the arrays:
+        for i, model in enumerate(self.models):
+            relative_filename = os.path.basename(model)
+            basic_node_values = self.parse_rules(relative_filename)
+            for j, name in enumerate(self.basic_axis_names):
+                getattr(self, name)[i] = basic_node_values[j]
+
+        # export basic and associated axes:
+        self.basic_axes = tuple([np.unique(getattr(self, name)) for name in self.basic_axis_names])
+        self.associated_axes = tuple([np.unique(getattr(self, name)) for name in self.associated_axis_names])
+        
+        # store all node indices:
+        nodes = np.vstack([getattr(self, name) for name in self.basic_axis_names]).T
+        self.indices = np.empty_like(nodes, dtype=int)
+        for i, basic_axis in enumerate(self.basic_axes):
+            self.indices[:,i] = np.searchsorted(basic_axis, nodes[:,i])
+
+    def parse_rules(self, relative_filename):
+        """
+        Provides rules for parsing atmosphere fits files containing data.
+        Only derived classes should implement this method.
+        """
+
+        return NotImplementedError
+
+    def add_associated_axis(self, name, axis):
+        """
+        Adds an associated axis to the model atmosphere.
+
+        Arguments
+        ----------
+        * `name` (string): name of the axis
+        * `axis` (array): values of the axis
+        
+        Returns
+        --------
+        * a copy of the added axis.
+        """
+
+        self.associated_axis_names += [name,]
+        self.associated_axes += (axis,)
+        setattr(self, name, axis)
+
+    def remove_associated_axis(self, name):
+        """
+        Removes an associated axis from the model atmosphere.
+
+        Arguments
+        ----------
+        * `name` (string): name of the axis
+        """
+
+        if name in self.associated_axis_names:
+            idx = self.associated_axis_names.index(name)
+            self.associated_axis_names.pop(idx)
+            self.associated_axes = self.associated_axes[:idx] + self.associated_axes[idx+1:]
+            delattr(self, name)
+
+    def limb_treatment(self, intensities):
+        """
+        Define how intensities at the exact limb (mu=0) should be treated. By
+        default, the intensities are linearly extrapolated to mu=0.
+        
+        Arguments
+        ----------
+        * `intensities` (array): intensities across all mus
+
+        Returns
+        --------
+        * an array of intensities with the limb treatment applied.
+        """
+
+        intensities[0] = intensities[1] + (intensities[2]-intensities[1])/(self.mus[2]-self.mus[1])*(self.mus[0]-self.mus[1])
+        return intensities
+
+
+class CK2004ModelAtmosphere(ModelAtmosphere):
+    """
+    Castelli & Kurucz (2004) model atmosphere.
+
+    The CK2004 model atmosphere is a grid of model atmospheres computed by
+    Castelli & Kurucz (2004). The grid is defined by effective temperature
+    (teff), surface gravity (logg), and chemical abundance (abun). The
+    intensities are computed for 37 angles (mus) on the 900-40000A wavelength
+    range.
+    """
+
+    def __init__(self, path):
+        super().__init__('ck2004', path)
+
+    mus = np.array([
+        0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04,
+        0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
+        0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
+    ])
+    wls = np.arange(900., 39999.501, 0.5)/1e10  # AA -> m
+    units = 1e7  # erg/s/cm^2/A -> W/m^3
+
+    def parse_rules(self, relative_filename):
+        return [
+            float(relative_filename[1:6]),  # teff
+            float(relative_filename[7:9])/10,  # logg
+            float(relative_filename[10:12])/10 * (-1 if relative_filename[9] == 'M' else 1)  # abun
+        ]
+
+
+class PhoenixModelAtmosphere(ModelAtmosphere):
+    """
+    Phoenix (Husser et al. 2012) model atmosphere.
+
+    The Phoenix model atmosphere is a grid of model atmospheres computed by
+    Husser et al. (2012). The grid is defined by effective temperature (teff),
+    surface gravity (logg), and chemical abundance (abun). The intensities are
+    computed for 37 angles between 500 and 26000 Angstroms.
+    """
+
+    def __init__(self, path):
+        super().__init__('phoenix', path)
+
+    mus = np.array([
+        0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04,
+        0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
+        0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
+    ])
+    wls = np.arange(500., 26000.)/1e10  # AA -> m
+    units = 1  # W/m^3
+
+    def parse_rules(self, relative_filename):
+        return [
+            float(relative_filename[1:6]),  # teff
+            float(relative_filename[7:11]),  # logg
+            float(relative_filename[12:16])  # abun
+        ]
+
+
+class TMAPModelAtmosphere(ModelAtmosphere):
+    """
+    TMAP model atmosphere.
+    """
+
+    def __init__(self, path):
+        super().__init__('tmap', path)
+        self.wls = np.load(path + '/wavelengths.npy')  # in meters
+
+    basic_axis_names = ['teffs', 'loggs']
+    associated_axis_names = ['mus']
+
+    mus = np.array([
+        0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
+        0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
+        0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
+        0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
+        0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
+        0.99280576, 0.99863193, 1.
+    ])
+    units = 1  # W/m^3
+
+    def parse_rules(self, relative_filename):
+        pars = re.split('[TGA.]+', relative_filename)
+        return [
+            float(pars[1]),  # teff
+            float(pars[2])/100  # logg
+        ]
 
 
 def _dict_without_keys(d, skip_keys=[]):
@@ -767,7 +1015,7 @@ class Passband:
 
         self.add_to_history(f"blackbody intensities {'with' if include_extinction else 'w/o'} extinction added.")
 
-    def parse_atm_datafiles(self, atm, path):
+    def new_parse_atm_datafiles(self, atm, path):
         """
         Provides rules for parsing atmosphere fits files containing data.
 
@@ -778,10 +1026,14 @@ class Passband:
 
         Returns
         -------
-        * `models` (ndarray): all non-null combinations of teffs/loggs/abuns
-        * `teffs` (array): axis of all unique effective temperatures
-        * `loggs` (array): axis of all unique surface gravities
-        * `abuns` (array): axis of all unique abundances
+        * `basic_axes` (dict of ndarrays): spanning axes of the model atmosphere
+            grid.
+        * `associated_axes` (dict of ndarrays): additional axes for the model
+            atmosphere grid. They are guaranteed to be defined for all non-null
+            combinations of basic axes.
+        * `models` (ndarray): all non-null combinations of basic axis elements
+        * `node_values` (dict of ndarrays): combinations of parameters for each
+            node in the grid.
         * `mus` (array): axis of all unique specific angles
         * `wls` (array): spectral energy distribution wavelengths
         * `units` (float): conversion units from model atmosphere intensity
@@ -790,166 +1042,78 @@ class Passband:
 
         models = glob.glob(path+'/*fits')
         nmodels = len(models)
-        teffs, loggs, abuns = np.empty(nmodels), np.empty(nmodels), np.empty(nmodels)
 
         if atm == 'ck2004':
-            mus = np.array([0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.])
+            basic_axis_names = ['teffs', 'loggs', 'abuns']
+            associated_axis_names = ['mus']
+            parse_rules = lambda relative_filename: [
+                float(relative_filename[1:6]),  # teff
+                float(relative_filename[7:9])/10,  # logg
+                float(relative_filename[10:12])/10 * (-1 if relative_filename[9] == 'M' else 1)  # abun
+            ]
+            mus = np.array([
+                0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04,
+                0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
+                0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
+            ])
             wls = np.arange(900., 39999.501, 0.5)/1e10  # AA -> m
-            for i, model in enumerate(models):
-                relative_filename = model[model.rfind('/')+1:] # get relative pathname
-                teffs[i] = float(relative_filename[1:6])
-                loggs[i] = float(relative_filename[7:9])/10
-                abuns[i] = float(relative_filename[10:12])/10 * (-1 if relative_filename[9] == 'M' else 1)
             units = 1e7  # erg/s/cm^2/A -> W/m^3
+
         elif atm == 'phoenix':
-            mus = np.array([0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.])
+            basic_axis_names = ['teffs', 'loggs', 'abuns']
+            associated_axis_names = ['mus']
+            parse_rules = lambda relative_filename: [
+                float(relative_filename[1:6]),  # teff
+                float(relative_filename[7:11]),  # logg
+                float(relative_filename[12:16])  # abun
+            ]
+            mus = np.array([
+                0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04,
+                0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
+                0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
+            ])
             wls = np.arange(500., 26000.)/1e10  # AA -> m
-            for i, model in enumerate(models):
-                relative_filename = model[model.rfind('/')+1:] # get relative pathname
-                teffs[i] = float(relative_filename[1:6])
-                loggs[i] = float(relative_filename[7:11])
-                abuns[i] = float(relative_filename[12:16])
             units = 1  # W/m^3
         elif atm in ['tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO']:
-            mus = np.array([0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619, 0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435, 0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605, 0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216, 0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112, 0.99280576, 0.99863193, 1.])
+            basic_axis_names = ['teffs', 'loggs']
+            associated_axis_names = ['mus']
+            def parse_rules(relative_filename):
+                pars = re.split('[TGA.]+', relative_filename)
+                return [
+                    float(pars[1]),  # teff
+                    float(pars[2])/100  # logg
+                ]
+            mus = np.array([
+                0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
+                0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
+                0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
+                0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
+                0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
+                0.99280576, 0.99863193, 1.
+            ])
             wls = np.load(path+'/wavelengths.npy')  # in meters
-            for i, model in enumerate(models):
-                pars = re.split('[TGA.]+', model[model.rfind('/')+1:])
-                teffs[i] = float(pars[1])
-                loggs[i] = float(pars[2])/100
-                abuns[i] = float(pars[3])/100
             units = 1  # W/m^3
         elif atm == 'tremblay':
-            mus = np.array([0., 0.0034357 , 0.01801404, 0.04388279, 0.08044151, 0.12683405, 0.18197316, 0.2445665 , 0.31314696, 0.38610707, 0.46173674, 0.53826326, 0.61389293, 0.68685304, 0.7554335 , 0.81802684, 0.87316595, 0.91955849, 0.95611721, 0.98198596, 0.9965643 , 1.])
+            basic_axis_names = ['teffs', 'loggs']
+            associated_axis_names = ['mus']
+            def parse_rules(relative_filename):
+                pars = re.split('[TGA.]+', relative_filename)
+                return [
+                    float(pars[1]),  # teff
+                    float(pars[2])/100,  # logg
+                ]
+            mus = np.array([
+                0., 0.0034357, 0.01801404, 0.04388279, 0.08044151, 0.12683405, 0.18197316,
+                0.2445665, 0.31314696, 0.38610707, 0.46173674, 0.53826326, 0.61389293,
+                0.68685304, 0.7554335, 0.81802684, 0.87316595, 0.91955849, 0.95611721,
+                0.98198596, 0.9965643, 1.
+            ])
             wls = np.load(path+'/wavelengths.npy')  # in meters
-            for i, model in enumerate(models):
-                pars = re.split('[TGA.]+', model[model.rfind('/')+1:])
-                teffs[i] = float(pars[1])
-                loggs[i] = float(pars[2])/100
-                abuns[i] = float(pars[3])/100
             units = 1  # W/m^3
         else:
             raise ValueError(f'atm={atm} is not supported.')
 
-        return models, teffs, loggs, abuns, mus, wls, units
-
-    def compute_intensities(self, atm, path, include_extinction=False, rvs=None, ebvs=None, verbose=True):
-        """
-        Computes direction-dependent passband intensities using the passed `atm`
-        model atmospheres.
-
-        Arguments
-        ----------
-        * `atm` (string): name of the model atmosphere
-        * `path` (string): path to the directory with SEDs in FITS format.
-        * `include_extinction` (boolean, optional, default=False): should the
-            extinction tables be computed as well. The mean effect of reddening
-            (a weighted average) on a passband uses the Gordon et al. (2009,
-            2014) prescription of extinction.
-        * `rvs` (array, optional, default=None): a custom array of extinction
-          factor Rv values. Rv is defined at Av / E(B-V) where Av is the visual
-          extinction in magnitudes. If None, the default linspace(2, 6, 16) is
-          used.
-        * `ebvs` (array, optional, default=None): a custom array of color excess
-          E(B-V) values. If None, the default linspace(0, 3, 30) is used.
-        * `verbose` (bool, optional, default=True): set to True to display
-            progress in the terminal.
-        """
-
-        if verbose:
-            print(f"Computing {atm} specific passband intensities for {self.pbset}:{self.pbname} {'with' if include_extinction else 'without'} extinction.")
-
-        models, teffs, loggs, abuns, mus, wls, units = self.parse_atm_datafiles(atm, path)
-        nmodels = len(models)
-
-        ints_energy, ints_photon = np.empty(nmodels*len(mus)), np.empty(nmodels*len(mus))
-
-        keep = (wls >= self.ptf_table['wl'][0]) & (wls <= self.ptf_table['wl'][-1])
-        wls = wls[keep]
-        ptf = self.ptf(wls)
-
-        if include_extinction:
-            if ebvs is None:
-                ebvs = np.linspace(0., 3., 30)
-            if rvs is None:
-                rvs = np.linspace(2., 6., 16)
-
-            ext_axes = (np.unique(teffs), np.unique(loggs), np.unique(abuns), ebvs, rvs)
-            ext_photon_grid = np.empty(shape=(len(np.unique(teffs)), len(np.unique(loggs)), len(np.unique(abuns)), len(ebvs), len(rvs), 1))
-            ext_energy_grid = np.empty(shape=(len(np.unique(teffs)), len(np.unique(loggs)), len(np.unique(abuns)), len(ebvs), len(rvs), 1))
-
-            axbx = libphoebe.gordon_extinction(wls)
-            ax, bx = axbx[:,0], axbx[:,1]
-            
-            # The following code broadcasts arrays so that integration can be vectorized:
-            Alam = 10**(-0.4 * ebvs[None, :, None] * (rvs[None, None, :] * ax[:, None, None] + bx[:, None, None]))
-
-        for i, model in tqdm(enumerate(models), desc=atm, total=len(models), disable=not verbose, unit=' models'):
-            with fits.open(model) as hdu:
-                seds = hdu[0].data*units  # must be in in W/m^3
-
-                # trim intensities to the passband limits:
-                seds = seds[:,keep]
-
-                pbints_energy = ptf*seds
-                fluxes_energy = np.trapz(pbints_energy, wls)
-
-                pbints_photon = wls*pbints_energy
-                fluxes_photon = np.trapz(pbints_photon, wls)
-
-                # work around log10(flux(mu=0)=0) = -inf:
-                fluxes_energy[mus < 1e-12] = fluxes_photon[mus < 1e-12] = 1
-
-                ints_energy[i*len(mus):(i+1)*len(mus)] = np.log10(fluxes_energy/self.ptf_area)         # energy-weighted intensity
-                ints_photon[i*len(mus):(i+1)*len(mus)] = np.log10(fluxes_photon/self.ptf_photon_area)  # photon-weighted intensity
-
-                if include_extinction:
-                    # we only use normal emergent intensities here for simplicity:
-                    epbints = pbints_energy[-1].reshape(-1, 1)
-                    egrid = np.trapz(epbints[:, :, None, None] * Alam[:, None, :, :], wls, axis=0) / np.trapz(epbints[:, :, None, None], wls, axis=0)
-
-                    ppbints = pbints_photon[-1].reshape(-1, 1)
-                    pgrid = np.trapz(ppbints[:, :, None, None] * Alam[:, None, :, :], wls, axis=0) / np.trapz(ppbints[:, :, None, None], wls, axis=0)
-
-                    t = (teffs[i] == ext_axes[0], loggs[i] == ext_axes[1], abuns[i] == ext_axes[2])
-                    ext_energy_grid[t] = egrid.reshape(len(ebvs), len(rvs), 1)
-                    ext_photon_grid[t] = pgrid.reshape(len(ebvs), len(rvs), 1)
-
-        basic_axes = (np.unique(teffs), np.unique(loggs), np.unique(abuns))
-        self.ndp[atm] = ndpolator.Ndpolator(basic_axes=basic_axes)
-
-        associated_axes = (np.unique(mus),)
-        axes = basic_axes + associated_axes
-
-        atm_energy_grid = np.full(shape=[len(axis) for axis in axes]+[1], fill_value=np.nan)
-        atm_photon_grid = np.copy(atm_energy_grid)
-
-        for i, int_energy in enumerate(ints_energy):
-            atm_energy_grid[teffs[int(i/len(mus))] == axes[0], loggs[int(i/len(mus))] == axes[1], abuns[int(i/len(mus))] == axes[2], mus[i%len(mus)] == axes[3], 0] = int_energy
-        for i, int_photon in enumerate(ints_photon):
-            atm_photon_grid[teffs[int(i/len(mus))] == axes[0], loggs[int(i/len(mus))] == axes[1], abuns[int(i/len(mus))] == axes[2], mus[i%len(mus)] == axes[3], 0] = int_photon
-
-        self.ndp[atm].register('inorm@photon', None, atm_photon_grid[...,-1,:])
-        self.ndp[atm].register('inorm@energy', None, atm_energy_grid[...,-1,:])
-        self.ndp[atm].register('imu@photon', associated_axes, atm_photon_grid)
-        self.ndp[atm].register('imu@energy', associated_axes, atm_energy_grid)
-
-        if f'{atm}:Imu' not in self.content:
-            self.content.append(f'{atm}:Imu')
-
-        if include_extinction:
-            associated_axes = (np.unique(ebvs), np.unique(rvs))
-            axes = basic_axes + associated_axes
-
-            self.ndp[atm].register('ext@photon', associated_axes, ext_photon_grid)
-            self.ndp[atm].register('ext@energy', associated_axes, ext_energy_grid)
-
-            if f'{atm}:ext' not in self.content:
-                self.content.append(f'{atm}:ext')
-
-        self.add_to_history(f"{atm} intensities {'with' if include_extinction else 'w/o'} extinction added.")
-
-    def _ld(self, mu=1.0, ld_coeffs=np.array([[0.5]]), ld_func='linear'):
+    def ld_func(self, mu=1.0, ld_coeffs=np.array([[0.5]]), ld_func='linear'):
         ld_coeffs = np.atleast_2d(ld_coeffs)
 
         if ld_func == 'linear':
@@ -965,220 +1129,203 @@ class Passband:
         else:
             raise NotImplementedError(f'ld_func={ld_func} is not supported.')
 
-    def _ldlaw_lin(self, mu, xl):
-        return 1.0-xl*(1-mu)
-
-    def _ldlaw_log(self, mu, xl, yl):
-        return 1.0-xl*(1-mu)-yl*mu*np.log(mu+1e-6)
-
-    def _ldlaw_sqrt(self, mu, xl, yl):
-        return 1.0-xl*(1-mu)-yl*(1.0-np.sqrt(mu))
-
-    def _ldlaw_quad(self, mu, xl, yl):
-        return 1.0-xl*(1.0-mu)-yl*(1.0-mu)*(1.0-mu)
-
-    def _ldlaw_nonlin(self, mu, c1, c2, c3, c4):
-        return 1.0-c1*(1.0-np.sqrt(mu))-c2*(1.0-mu)-c3*(1.0-mu*np.sqrt(mu))-c4*(1.0-mu*mu)
-
-    def compute_ldcoeffs(self, ldatm, weighting='uniform'):
+    def compute_intensities(self, atm, include_ld=True, impute=False, include_extinction=False, rvs=None, ebvs=None, verbose=True):
         """
-        Computes limb darkening coefficients for linear, log, square root,
-        quadratic and power laws.
+        Computes direction-dependent passband intensities using the passed `atm`
+        model atmospheres.
 
         Arguments
         ----------
-        * `ldatm` (string): model atmosphere for the limb darkening
-          coefficients
-        * `weighting` (string, optional, default='uniform'): determines how
-            data points should be weighted.
-            * 'uniform':  do not apply any per-point weighting
-            * 'interval': apply weighting based on the interval widths
+        * `atm` (<ModelAtmosphere> instance): model atmosphere instance
+        * `include_ld` (bool, optional, default=True): set to True to include
+            limb darkening coefficients in the computation. This will also
+            calculate and tabulate integrals of the piecewise linear limb
+            darkening function.
+        * `impute` (bool, optional, default=False): set to True to impute the
+            missing values in the grid. This is useful when the grid is
+            incomplete.
+        * `include_extinction` (boolean, optional, default=False): should the
+            extinction tables be computed as well. The mean effect of reddening
+            (a weighted average) on a passband uses the Gordon et al. (2009,
+            2014) prescription of extinction.
+        * `rvs` (array, optional, default=None): a custom array of extinction
+          factor Rv values. Rv is defined at Av / E(B-V) where Av is the visual
+          extinction in magnitudes. If None, the default linspace(2, 6, 16) is
+          used.
+        * `ebvs` (array, optional, default=None): a custom array of color excess
+          E(B-V) values. If None, the default linspace(0, 3, 30) is used.
+        * `verbose` (bool, optional, default=True): set to True to display
+            progress in the terminal.
+
+        Raises
+        ------
+        * ValueError: if the `atm` instance does not have the wavelength span
+            defined.
         """
 
-        if f'{ldatm}:Imu' not in self.content:
-            raise RuntimeError(f'atm={ldatm} intensities are not found in the {self.pbset}:{self.pbname} passband.')
+        if verbose:
+            print(f"Computing {atm.name} specific passband intensities for {self.pbset}:{self.pbname} {'with' if include_extinction else 'without'} extinction.")
 
-        basic_axes = self.ndp[ldatm].axes
-        mus = self.ndp[ldatm].table['imu@photon'][0][0]
-        if ldatm[:4] == 'tmap' or ldatm == 'tremblay':
-            # remove extrapolated points in mu for TMAP and Tremblay model atmospheres:
-            mus = mus[1:-1]
+        if not hasattr(atm, 'wls'):
+            raise ValueError(f'{atm.name} does not have wavelength span defined.')
 
-        ld_energy_grid = np.full(shape=[len(axis) for axis in basic_axes]+[11], fill_value=np.nan)
-        ld_photon_grid = np.copy(ld_energy_grid)
+        # trim intensities to the passband limits:
+        keep = (atm.wls >= self.ptf_table['wl'][0]) & (atm.wls <= self.ptf_table['wl'][-1])
+        wls = atm.wls[keep]
+        ptf = self.ptf(wls)
 
-        if weighting == 'uniform':
-            sigma = np.ones(len(mus))
-        elif weighting == 'interval':
-            delta = np.concatenate( (np.array((mus[1]-mus[0],)), mus[1:]-mus[:-1]) )
-            sigma = 1./np.sqrt(delta)
-        else:
-            raise ValueError(f'weighting={weighting} is not supported.')
+        # initialize arrays for intensities:
+        associated_specint_axes = (atm.mus,)
+        grid_shape = tuple([len(axis) for axis in atm.basic_axes + associated_specint_axes] + [1])
+        atm_energy_grid = np.full(shape=grid_shape, fill_value=np.nan)
+        atm_photon_grid = np.full_like(atm_energy_grid, fill_value=np.nan)
 
-        atm_energy_grid = self.ndp[ldatm].table['imu@energy'][1]
-        atm_photon_grid = self.ndp[ldatm].table['imu@photon'][1]
+        if include_extinction:
+            # add extinction axes:
+            atm.add_associated_axis('ebvs', ebvs or np.linspace(0., 3., 30))
+            atm.add_associated_axis('rvs', rvs or np.linspace(2., 6., 16))
 
-        for Tindex in range(len(basic_axes[0])):
-            for lindex in range(len(basic_axes[1])):
-                for mindex in range(len(basic_axes[2])):
-                    if ldatm[:4] == 'tmap' or ldatm == 'tremblay':
-                        IsE = 10**atm_energy_grid[Tindex,lindex,mindex,1:-1].flatten()
-                    else:
-                        IsE = 10**atm_energy_grid[Tindex,lindex,mindex,:].flatten()
-                    fEmask = np.isfinite(IsE)
-                    if len(IsE[fEmask]) <= 1:
-                        continue
-                    IsE /= IsE[fEmask][-1]
+            # initialize arrays for extincted intensities:
+            associated_extinct_axes = (atm.ebvs, atm.rvs)
+            grid_shape = tuple([len(axis) for axis in atm.basic_axes + associated_extinct_axes] + [1])
+            ext_photon_grid = np.empty(shape=grid_shape)
+            ext_energy_grid = np.empty_like(ext_photon_grid)
 
-                    cElin,  pcov = cfit(f=self._ldlaw_lin,    xdata=mus[fEmask], ydata=IsE[fEmask], sigma=sigma[fEmask], p0=[0.5])
-                    cElog,  pcov = cfit(f=self._ldlaw_log,    xdata=mus[fEmask], ydata=IsE[fEmask], sigma=sigma[fEmask], p0=[0.5, 0.5])
-                    cEsqrt, pcov = cfit(f=self._ldlaw_sqrt,   xdata=mus[fEmask], ydata=IsE[fEmask], sigma=sigma[fEmask], p0=[0.5, 0.5])
-                    cEquad, pcov = cfit(f=self._ldlaw_quad,   xdata=mus[fEmask], ydata=IsE[fEmask], sigma=sigma[fEmask], p0=[0.5, 0.5])
-                    cEnlin, pcov = cfit(f=self._ldlaw_nonlin, xdata=mus[fEmask], ydata=IsE[fEmask], sigma=sigma[fEmask], p0=[0.5, 0.5, 0.5, 0.5])
-                    ld_energy_grid[Tindex, lindex, mindex] = np.hstack((cElin, cElog, cEsqrt, cEquad, cEnlin))
+            axbx = libphoebe.gordon_extinction(wls)
+            ax, bx = axbx[:,0], axbx[:,1]
 
-                    if ldatm[:4] == 'tmap' or ldatm == 'tremblay':
-                        IsP = 10**atm_photon_grid[Tindex,lindex,mindex,1:-1].flatten()
-                    else:
-                        IsP = 10**atm_photon_grid[Tindex,lindex,mindex,:].flatten()
-                    fPmask = np.isfinite(IsP)
-                    IsP /= IsP[fPmask][-1]
+            # The following code broadcasts arrays so that integration can be vectorized:
+            Alam = 10**(-0.4 * atm.ebvs[None, :, None] * (atm.rvs[None, None, :] * ax[:, None, None] + bx[:, None, None]))
 
-                    cPlin,  pcov = cfit(f=self._ldlaw_lin,    xdata=mus[fPmask], ydata=IsP[fPmask], sigma=sigma[fEmask], p0=[0.5])
-                    cPlog,  pcov = cfit(f=self._ldlaw_log,    xdata=mus[fPmask], ydata=IsP[fPmask], sigma=sigma[fEmask], p0=[0.5, 0.5])
-                    cPsqrt, pcov = cfit(f=self._ldlaw_sqrt,   xdata=mus[fPmask], ydata=IsP[fPmask], sigma=sigma[fEmask], p0=[0.5, 0.5])
-                    cPquad, pcov = cfit(f=self._ldlaw_quad,   xdata=mus[fPmask], ydata=IsP[fPmask], sigma=sigma[fEmask], p0=[0.5, 0.5])
-                    cPnlin, pcov = cfit(f=self._ldlaw_nonlin, xdata=mus[fPmask], ydata=IsP[fPmask], sigma=sigma[fEmask], p0=[0.5, 0.5, 0.5, 0.5])
-                    ld_photon_grid[Tindex, lindex, mindex] = np.hstack((cPlin, cPlog, cPsqrt, cPquad, cPnlin))
+        for i, model in tqdm(enumerate(atm.models), desc=atm.name, total=atm.nmodels, disable=not verbose, unit=' models'):
+            with fits.open(model) as hdu:
+                # load specific intensities and trim them to the passband limits:
+                ints = hdu[0].data[:, keep] * atm.units  # must be in in W/m^3
 
-        self.ndp[ldatm].register('ld@photon', None, ld_photon_grid)
-        self.ndp[ldatm].register('ld@energy', None, ld_energy_grid)
+            # calculate energy-weighted passband intensities and fluxes:
+            pbints_energy = ptf*ints
+            fluxes_energy = np.trapz(pbints_energy, wls)
 
-        if f'{ldatm}:ld' not in self.content:
-            self.content.append(f'{ldatm}:ld')
+            # calculate photon count-weighted passband intensities and fluxes:
+            pbints_photon = wls*pbints_energy
+            fluxes_photon = np.trapz(pbints_photon, wls)
 
-        self.add_to_history(f'LD coefficients for {ldatm} added.')
+            # handle the limb according to the prescription in the model atmosphere:
+            fluxes_energy = atm.limb_treatment(fluxes_energy)
+            fluxes_photon = atm.limb_treatment(fluxes_photon)
 
-    def export_phoenix_atmtab(self):
-        """
-        Exports PHOENIX intensity table to a PHOEBE legacy compatible format.
-        """
+            # compute specific energy-weighted and photon count-weighted intensities:
+            atm_energy_grid[tuple(atm.indices[i])] = np.log10(fluxes_energy/self.ptf_area).reshape(-1, 1)
+            atm_photon_grid[tuple(atm.indices[i])] = np.log10(fluxes_photon/self.ptf_photon_area).reshape(-1, 1)
 
-        teffs = self.ndp['phoenix'].axes[0]
-        tlow, tup = teffs[0], teffs[-1]
-        trel = (teffs-tlow)/(tup-tlow)
+            if include_extinction:
+                # we only use normal emergent intensities for extinction:
+                epbints = pbints_energy[-1].reshape(-1, 1)
+                egrid = np.trapz(epbints[:, :, None, None] * Alam[:, None, :, :], wls, axis=0) / np.trapz(epbints[:, :, None, None], wls, axis=0)
 
-        for abun in range(len(self.ndp['phoenix'].axes[2])):
-            for logg in range(len(self.ndp['phoenix'].axes[1])):
-                logI = self.ndp['phoenix'].table['imu@energy'][1][:,logg,abun,-1,0]+1 # +1 to take care of WD units
+                ppbints = pbints_photon[-1].reshape(-1, 1)
+                pgrid = np.trapz(ppbints[:, :, None, None] * Alam[:, None, :, :], wls, axis=0) / np.trapz(ppbints[:, :, None, None], wls, axis=0)
 
-                # find the last non-nan value:
-                if np.isnan(logI).sum() > 0:
-                    imax = len(teffs)-np.where(~np.isnan(logI[::-1]))[0][0]
+                ext_energy_grid[tuple(atm.indices[i])] = egrid.reshape(len(atm.ebvs), len(atm.rvs), 1)
+                ext_photon_grid[tuple(atm.indices[i])] = pgrid.reshape(len(atm.ebvs), len(atm.rvs), 1)
 
-                    # interpolate any in-between nans:
-                    missing, xs = np.isnan(logI[:imax]), lambda z: z.nonzero()[0]
-                    logI[:imax][missing] = np.interp(xs(missing), xs(~missing), logI[:imax][~missing])
-                else:
-                    imax = len(teffs)
+        if impute:
+            if verbose:
+                print(f'Imputing {atm.name} intensities with linear interpolation...')
 
-                Cl = np.polynomial.legendre.legfit(trel[:imax], logI[:imax], 9)
+            # find all defined coordinates to interpolate from:
+            valid_mask = ~np.isnan(atm_energy_grid[..., -1, 0])
+            coords = np.array(np.nonzero(valid_mask)).T
 
-                print('%8.1f %7.1f % 16.9E % 16.9E % 16.9E % 16.9E % 16.9E % 16.9E % 16.9E % 16.9E % 16.9E % 16.9E' % (teffs[0], teffs[imax-1], Cl[0], Cl[1], Cl[2], Cl[3], Cl[4], Cl[5], Cl[6], Cl[7], Cl[8], Cl[9]))
+            # find all undefined coordinates to interpolate in:
+            nan_mask = ~valid_mask
+            nan_coords = np.array(np.nonzero(nan_mask)).T
 
-    def export_legacy_ldcoeffs(self, models, atm='ck2004', filename=None, intens_weighting='photon'):
-        """
-        Exports  limb darkening coefficients to a PHOEBE legacy compatible format.
+            for grid in (atm_energy_grid, atm_photon_grid):
+                # interpolate sequentially for each mu:
+                for i in range(len(atm.mus)):
+                    values = grid[..., i, 0][valid_mask]
+                    it = interpolate.LinearNDInterpolator(coords, values, fill_value=np.nan, rescale=True)
+                    grid[..., i, 0][nan_mask] = it(nan_coords)
 
-        Arguments
-        -----------
-        * `models` (string): the path (including the filename) of legacy's
-            models.list
-        * `atm` (string, default='ck2004'): atmosphere model, 'ck2004' or 'phoenix'
-        * `filename` (string, optional, default=None): output filename for
-            storing the table
-        * `intens_weighting`
-        """
+            new_nan_mask = np.isnan(atm_energy_grid[..., -1, 0])
+            n_imputed = np.sum(nan_mask) - np.sum(new_nan_mask)
+            self.add_to_history(f'{n_imputed} values imputed in {atm.name} intensities.')
 
-        axes = self.ndp[atm].axes
-        grid = self.ndp[atm].table['ld@photon'][1] if intens_weighting == 'photon' else self.ndp[atm].table['ld@energy'][1]
+        self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=atm.basic_axes)
 
-        if filename is not None:
-            import time
-            f = open(filename, 'w')
-            f.write('# PASS_SET  %s\n' % self.pbset)
-            f.write('# PASSBAND  %s\n' % self.pbname)
-            f.write('# VERSION   1.0\n\n')
-            f.write('# Exported from PHOEBE-2 passband on %s\n' % (time.ctime()))
-            f.write('# The coefficients are computed for the %s-weighted regime from %s atmospheres.\n\n' % (intens_weighting, atm))
+        self.ndp[atm.name].register('inorm@photon', None, atm_photon_grid[..., -1, :])
+        self.ndp[atm.name].register('inorm@energy', None, atm_energy_grid[..., -1, :])
+        self.ndp[atm.name].register('imu@photon', associated_specint_axes, atm_photon_grid)
+        self.ndp[atm.name].register('imu@energy', associated_specint_axes, atm_energy_grid)
 
-        mods = np.loadtxt(models)
-        for mod in mods:
-            Tindex = np.argwhere(axes[0] == mod[0])[0][0]
-            lindex = np.argwhere(axes[1] == mod[1]/10)[0][0]
-            mindex = np.argwhere(axes[2] == mod[2]/10)[0][0]
-            if filename is None:
-                print('%6.3f '*11 % tuple(grid[Tindex, lindex, mindex].tolist()))
-            else:
-                f.write(('%6.3f '*11+'\n') % tuple(grid[Tindex, lindex, mindex].tolist()))
+        if f'{atm.name}:Inorm' not in self.content:
+            self.content.append(f'{atm.name}:Inorm')
 
-        if filename is not None:
-            f.close()
+        if f'{atm.name}:Imu' not in self.content:
+            self.content.append(f'{atm.name}:Imu')
 
-    def compute_ldints(self, ldatm):
-        r"""
-        Computes integrated limb darkening profiles for the passed `ldatm`.
+        if include_extinction:
+            self.ndp[atm.name].register('ext@photon', associated_extinct_axes, ext_photon_grid)
+            self.ndp[atm.name].register('ext@energy', associated_extinct_axes, ext_energy_grid)
 
-        These are used for intensity-to-flux transformations. The evaluated
-        integral is:
+            if f'{atm.name}:ext' not in self.content:
+                self.content.append(f'{atm.name}:ext')
 
-        ldint = 2 \int_0^1 Imu mu dmu
+        self.add_to_history(f"{atm.name} intensities {'with' if include_extinction else 'w/o'} extinction added.")
 
-        Arguments
-        ----------
-        * `ldatm` (string): model atmosphere for the limb darkening calculation.
-        """
+        if include_ld:
+            if verbose:
+                print(f'Computing {atm.name} limb darkening coefficients...')
 
-        if f'{ldatm}:Imu' not in self.content:
-            raise RuntimeError(f'atm={ldatm} intensities are not found in the {self.pbset}:{self.pbname} passband.')
+            # initialize arrays for limb darkening coefficients:
+            ld_energy_grid = np.full(shape=[len(axis) for axis in atm.basic_axes]+[11], fill_value=np.nan)
+            ld_photon_grid = np.full_like(ld_energy_grid, fill_value=np.nan)
 
-        ldaxes = self.ndp[ldatm].axes
-        ldtable = self.ndp[ldatm].table['imu@energy'][1]
-        pldtable = self.ndp[ldatm].table['imu@photon'][1]
+            # initialize arrays for limb darkening integrals:
+            ldint_energy_grid = np.full(shape=[len(axis) for axis in atm.basic_axes]+[1], fill_value=np.nan)
+            ldint_photon_grid = np.full_like(ldint_energy_grid, fill_value=np.nan)
 
-        ldint_energy_grid = np.nan*np.ones((len(ldaxes[0]), len(ldaxes[1]), len(ldaxes[2]), 1))
-        ldint_photon_grid = np.nan*np.ones((len(ldaxes[0]), len(ldaxes[1]), len(ldaxes[2]), 1))
+            # define the residuals function for the least squares optimization:
+            def ld_resids(x, *args, **kwargs):
+                xdata = kwargs.get('xdata')
+                ydata = kwargs.get('ydata')
+                ld_func = kwargs.get('ld_func', 'linear')
 
-        mu = self.ndp[ldatm].table['imu@photon'][0][0]
-        Imu = 10**ldtable[:,:,:,:]/10**ldtable[:,:,:,-1:]
-        pImu = 10**pldtable[:,:,:,:]/10**pldtable[:,:,:,-1:]
+                return self.ld_func(mu=xdata, ld_coeffs=x, ld_func=ld_func) - ydata
 
-        # To compute the fluxes, we need to evaluate \int_0^1 2pi Imu mu dmu.
+            # loop over all defined coordinates to compute limb darkening coefficients and integrals:
+            for grid, ld_grid, ldint_grid in zip([atm_energy_grid, atm_photon_grid], [ld_energy_grid, ld_photon_grid], [ldint_energy_grid, ldint_photon_grid]):
+                for ind in atm.indices:
+                    xdata = atm.mus
+                    ydata = 10**grid[tuple(ind)].flatten()
+                    ydata /= ydata[-1]
+                    # TODO: consider support for non-uniform weighing
 
-        for a in range(len(ldaxes[0])):
-            for b in range(len(ldaxes[1])):
-                for c in range(len(ldaxes[2])):
-                    ldint = 0.0
-                    pldint = 0.0
-                    for i in range(len(mu)-1):
-                        ki = (Imu[a,b,c,i+1]-Imu[a,b,c,i])/(mu[i+1]-mu[i])
-                        ni = Imu[a,b,c,i]-ki*mu[i]
-                        ldint += ki/3*(mu[i+1]**3-mu[i]**3) + ni/2*(mu[i+1]**2-mu[i]**2)
+                    ld_row = []
+                    for ld_func, ld_dim in zip(['linear', 'logarithmic', 'square_root', 'quadratic', 'power'], [1, 2, 2, 2, 4]):
+                        result = least_squares(fun=ld_resids, x0=np.full(ld_dim, 0.5), method='lm', kwargs={'xdata': xdata, 'ydata': ydata, 'ld_func': ld_func})
+                        ld_row.append(result.x)
 
-                        pki = (pImu[a,b,c,i+1]-pImu[a,b,c,i])/(mu[i+1]-mu[i])
-                        pni = pImu[a,b,c,i]-pki*mu[i]
-                        pldint += pki/3*(mu[i+1]**3-mu[i]**3) + pni/2*(mu[i+1]**2-mu[i]**2)
+                    ld_grid[tuple(ind)] = np.hstack(ld_row)
 
-                    ldint_energy_grid[a,b,c] = 2*ldint
-                    ldint_photon_grid[a,b,c] = 2*pldint
+                    # compute limb darkening integrals for the piecewise linear LD func:
+                    slopes = np.diff(ydata)/np.diff(xdata)
+                    intercepts = ydata[:-1] - slopes*xdata[:-1]
+                    areas = 2/3 * slopes * np.diff(xdata**3) + intercepts * np.diff(xdata**2)
+                    ldint_grid[tuple(ind)] = areas.sum()
 
-        self.ndp[ldatm].register('ldint@photon', None, ldint_photon_grid)
-        self.ndp[ldatm].register('ldint@energy', None, ldint_energy_grid)
+            self.ndp[atm.name].register('ld@photon', None, ld_photon_grid)
+            self.ndp[atm.name].register('ld@energy', None, ld_energy_grid)
+            if f'{atm.name}:ld' not in self.content:
+                self.content.append(f'{atm.name}:ld')
+            self.add_to_history(f'LD coefficients for {atm.name} added.')
 
-        if f'{ldatm}:ldint' not in self.content:
-            self.content.append(f'{ldatm}:ldint')
-
-        self.add_to_history(f'LD integrals for {ldatm} added.')
+            self.ndp[atm.name].register('ldint@photon', None, ldint_photon_grid)
+            self.ndp[atm.name].register('ldint@energy', None, ldint_energy_grid)
+            if f'{atm.name}:ldint' not in self.content:
+                self.content.append(f'{atm.name}:ldint')
+            self.add_to_history(f'LD integrals for {atm.name} added.')
 
     def interpolate_ldcoeffs(self, query_pts, ldatm='ck2004', ld_func='power', intens_weighting='photon', ld_extrapolation_method='none'):
         """
@@ -2859,8 +3006,6 @@ if __name__ == '__main__':
 
     for atm in ['ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
         pb.compute_intensities(atm=atm, path=f'tables/{atm}', verbose=True)
-        pb.compute_ldcoeffs(ldatm=atm, weighting='interval')
-        pb.compute_ldints(ldatm=atm)
 
     pb.import_wd_atmcof('tables/wd/atmcofplanck.dat', 'tables/wd/atmcof.dat', 7)
 
