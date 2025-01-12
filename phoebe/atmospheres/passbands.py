@@ -224,6 +224,36 @@ class ModelAtmosphere:
             self.associated_axes = self.associated_axes[:idx] + self.associated_axes[idx+1:]
             delattr(self, name)
 
+    def add_axis_node(self, axis_name, axis_node):
+        """
+        Adds a node to the specified axis. This method is used
+        when we want to add another value into the convex hull
+        spun by the current axes. If you do not know why you would
+        use this method, you likely should not use it.
+
+        Arguments
+        ----------
+        * `axis_name` (string): name of the axis
+        * `axis_node` (float): value of the node to be added
+        """
+
+        if axis_name in self.basic_axis_names:
+            new_axes = list(self.basic_axes)
+            axis_index = self.basic_axis_names.index(axis_name)
+            axis = self.basic_axes[axis_index]
+            if axis_node not in axis:
+                axis = np.append(axis, axis_node)
+                axis.sort()
+
+                new_axes[axis_index] = axis
+                self.basic_axes = tuple(new_axes)
+                nodes = np.vstack([getattr(self, name) for name in self.basic_axis_names]).T
+                self.indices = np.empty_like(nodes, dtype=int)
+                for i, basic_axis in enumerate(self.basic_axes):
+                    self.indices[:, i] = np.searchsorted(basic_axis, nodes[:, i])
+        else:
+            raise ValueError(f"Axis name '{axis_name}' not recognized.")
+
     def limb_treatment(self, intensities):
         """
         Define how intensities at the exact limb (mu=0) should be treated. By
@@ -1129,7 +1159,7 @@ class Passband:
         else:
             raise NotImplementedError(f'ld_func={ld_func} is not supported.')
 
-    def compute_intensities(self, atm, include_ld=True, impute=False, include_extinction=False, rvs=None, ebvs=None, verbose=True):
+    def compute_intensities(self, atm, include_ld=True, include_extinction=False, rvs=None, ebvs=None, verbose=True):
         """
         Computes direction-dependent passband intensities using the passed `atm`
         model atmospheres.
@@ -1141,9 +1171,6 @@ class Passband:
             limb darkening coefficients in the computation. This will also
             calculate and tabulate integrals of the piecewise linear limb
             darkening function.
-        * `impute` (bool, optional, default=False): set to True to impute the
-            missing values in the grid. This is useful when the grid is
-            incomplete.
         * `include_extinction` (boolean, optional, default=False): should the
             extinction tables be computed as well. The mean effect of reddening
             (a weighted average) on a passband uses the Gordon et al. (2009,
@@ -1228,29 +1255,6 @@ class Passband:
 
                 ext_energy_grid[tuple(atm.indices[i])] = egrid.reshape(len(atm.ebvs), len(atm.rvs), 1)
                 ext_photon_grid[tuple(atm.indices[i])] = pgrid.reshape(len(atm.ebvs), len(atm.rvs), 1)
-
-        if impute:
-            if verbose:
-                print(f'Imputing {atm.name} intensities with linear interpolation...')
-
-            # find all defined coordinates to interpolate from:
-            valid_mask = ~np.isnan(atm_energy_grid[..., -1, 0])
-            coords = np.array(np.nonzero(valid_mask)).T
-
-            # find all undefined coordinates to interpolate in:
-            nan_mask = ~valid_mask
-            nan_coords = np.array(np.nonzero(nan_mask)).T
-
-            for grid in (atm_energy_grid, atm_photon_grid):
-                # interpolate sequentially for each mu:
-                for i in range(len(atm.mus)):
-                    values = grid[..., i, 0][valid_mask]
-                    it = interpolate.LinearNDInterpolator(coords, values, fill_value=np.nan, rescale=True)
-                    grid[..., i, 0][nan_mask] = it(nan_coords)
-
-            new_nan_mask = np.isnan(atm_energy_grid[..., -1, 0])
-            n_imputed = np.sum(nan_mask) - np.sum(new_nan_mask)
-            self.add_to_history(f'{n_imputed} values imputed in {atm.name} intensities.')
 
         self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=atm.basic_axes)
 
