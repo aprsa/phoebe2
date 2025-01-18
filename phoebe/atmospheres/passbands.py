@@ -1,8 +1,8 @@
 from phoebe import __version__ as phoebe_version
 from phoebe import conf, mpi
 from phoebe.utils import _bytes
+from phoebe.atmospheres.models import _atmtable
 from tqdm import tqdm
-from itertools import product
 
 import ndpolator
 
@@ -82,285 +82,6 @@ if not os.path.exists(_pbdir_local):
 
 _pbdir_env = os.getenv('PHOEBE_PBDIR', None)
 
-
-class ModelAtmosphere:
-    """
-    A parent class for handling model atmosphere data. Please note that only
-    derived classes should be instantiated.
-
-    Model atmospheres are approximations to stellar atmospheres. Each model
-    connects input parameters (for example, effective temperature, surface
-    gravity, and chemical abundances) to output parameters (for example,
-    intensities at different wavelengths and angles). The ModelAtmosphere
-    class provides a common interface for handling different model
-    atmospheres.
-
-    In order to have a model atmosphere supported, the following attributes
-    need to be defined:
-    
-    * `basic_axis_names` (list): names of the basic axes; basic axes are
-        axes that span the basic n-dimensional model atmosphere grid. The grid
-        can be sparsely populated, but it must be regular.
-    * `associated_axis_names` (list): names of the associated axes; associated
-        axes are axes that are not part of the basic grid, but are associated
-        with it. For example, the mus axis is associated with the basic grid
-        of teffs, loggs, and abuns. Associated axes must be fully defined in
-        all basic grid nodes.
-    * `mus` (array): specific angles, mu=cos(theta), where theta is the angle
-        between the observer and the surface normal.
-    * `wls` (array): wavelengths of the model atmosphere intensities.
-    * `units` (float): intensity unit conversion factor. The intensities are
-        usually given in erg/s/cm^2/A, which is converted to W/m^3 by
-        multiplying with this factor.
-    
-    In addition, the following methods need to or may be overloaded:
-    
-    * `parse_rules`: provides rules for parsing atmosphere fits filenames to
-        extract basic axis values.
-    * `limb_treatment`: defines how intensities at the exact limb (mu=0) should
-        be treated. By default, the intensities are linearly extrapolated to
-        mu=0.
-
-    When a model atmosphere is instantiated, the basic axes are populated with
-    unique values from the filenames of the atmosphere fits files. Associated axes
-    are populated from the fits file contents. The axes are then exported as
-    numpy arrays. The model atmosphere can also be extended with additional
-    associated axes (for example, `ebvs` and `rvs` for extincted intensities).
-
-    Attributes that are automatically populated:
-
-    * `models` (list): list of atmosphere fits files
-    * `nmodels` (int): number of atmosphere fits files
-    * `basic_axes` (tuple): tuple of numpy arrays for basic axes
-    * `associated_axes` (tuple): tuple of numpy arrays for associated axes
-    * `indices` (array): array of indices for all defined nodes in the model
-        atmosphere
-    * `[axis_name]` (array): numpy array for each axis, where the name is
-        automatically inferred from the basic and associated axis names
-
-    Arguments
-    ----------
-    * `atm` (string): common name of the model atmosphere
-    * `path` (string): relative or absolute path to data files
-    
-    Raises
-    -------
-    * `FileNotFoundError`: if the path does not exist
-    """
-
-    # default axes:
-    basic_axis_names = ['teffs', 'loggs', 'abuns']
-    associated_axis_names = ['mus']
-
-    def __init__(self, atm, path):
-        self.name = atm
-        self.path = path
-
-        try:
-            self.models = glob.glob(os.path.join(path, '*fits'))
-            self.nmodels = len(self.models)
-        except FileNotFoundError:
-            raise FileNotFoundError(f'path {path} does not exist.')
-
-        # initialize arrays for basic axes:
-        for name in self.basic_axis_names:
-            setattr(self, name, np.empty(self.nmodels))
-
-        # parse the filenames and populate the arrays:
-        for i, model in enumerate(self.models):
-            relative_filename = os.path.basename(model)
-            basic_node_values = self.parse_rules(relative_filename)
-            for j, name in enumerate(self.basic_axis_names):
-                getattr(self, name)[i] = basic_node_values[j]
-
-        # export basic and associated axes:
-        self.basic_axes = tuple([np.unique(getattr(self, name)) for name in self.basic_axis_names])
-        self.associated_axes = tuple([np.unique(getattr(self, name)) for name in self.associated_axis_names])
-        
-        # store all node indices:
-        nodes = np.vstack([getattr(self, name) for name in self.basic_axis_names]).T
-        self.indices = np.empty_like(nodes, dtype=int)
-        for i, basic_axis in enumerate(self.basic_axes):
-            self.indices[:,i] = np.searchsorted(basic_axis, nodes[:,i])
-
-    def parse_rules(self, relative_filename):
-        """
-        Provides rules for parsing atmosphere fits files containing data.
-        Only derived classes should implement this method.
-        """
-
-        return NotImplementedError
-
-    def add_associated_axis(self, name, axis):
-        """
-        Adds an associated axis to the model atmosphere.
-
-        Arguments
-        ----------
-        * `name` (string): name of the axis
-        * `axis` (array): values of the axis
-        
-        Returns
-        --------
-        * a copy of the added axis.
-        """
-
-        self.associated_axis_names += [name,]
-        self.associated_axes += (axis,)
-        setattr(self, name, axis)
-
-    def remove_associated_axis(self, name):
-        """
-        Removes an associated axis from the model atmosphere.
-
-        Arguments
-        ----------
-        * `name` (string): name of the axis
-        """
-
-        if name in self.associated_axis_names:
-            idx = self.associated_axis_names.index(name)
-            self.associated_axis_names.pop(idx)
-            self.associated_axes = self.associated_axes[:idx] + self.associated_axes[idx+1:]
-            delattr(self, name)
-
-    def add_axis_node(self, axis_name, axis_node):
-        """
-        Adds a node to the specified axis. This method is used
-        when we want to add another value into the convex hull
-        spun by the current axes. If you do not know why you would
-        use this method, you likely should not use it.
-
-        Arguments
-        ----------
-        * `axis_name` (string): name of the axis
-        * `axis_node` (float): value of the node to be added
-        """
-
-        if axis_name in self.basic_axis_names:
-            new_axes = list(self.basic_axes)
-            axis_index = self.basic_axis_names.index(axis_name)
-            axis = self.basic_axes[axis_index]
-            if axis_node not in axis:
-                axis = np.append(axis, axis_node)
-                axis.sort()
-
-                new_axes[axis_index] = axis
-                self.basic_axes = tuple(new_axes)
-                nodes = np.vstack([getattr(self, name) for name in self.basic_axis_names]).T
-                self.indices = np.empty_like(nodes, dtype=int)
-                for i, basic_axis in enumerate(self.basic_axes):
-                    self.indices[:, i] = np.searchsorted(basic_axis, nodes[:, i])
-        else:
-            raise ValueError(f"Axis name '{axis_name}' not recognized.")
-
-    def limb_treatment(self, intensities):
-        """
-        Define how intensities at the exact limb (mu=0) should be treated. By
-        default, the intensities are linearly extrapolated to mu=0.
-        
-        Arguments
-        ----------
-        * `intensities` (array): intensities across all mus
-
-        Returns
-        --------
-        * an array of intensities with the limb treatment applied.
-        """
-
-        intensities[0] = intensities[1] + (intensities[2]-intensities[1])/(self.mus[2]-self.mus[1])*(self.mus[0]-self.mus[1])
-        return intensities
-
-
-class CK2004ModelAtmosphere(ModelAtmosphere):
-    """
-    Castelli & Kurucz (2004) model atmosphere.
-
-    The CK2004 model atmosphere is a grid of model atmospheres computed by
-    Castelli & Kurucz (2004). The grid is defined by effective temperature
-    (teff), surface gravity (logg), and chemical abundance (abun). The
-    intensities are computed for 37 angles (mus) on the 900-40000A wavelength
-    range.
-    """
-
-    def __init__(self, path):
-        super().__init__('ck2004', path)
-
-    mus = np.array([
-        0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04,
-        0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
-        0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
-    ])
-    wls = np.arange(900., 39999.501, 0.5)/1e10  # AA -> m
-    units = 1e7  # erg/s/cm^2/A -> W/m^3
-
-    def parse_rules(self, relative_filename):
-        return [
-            float(relative_filename[1:6]),  # teff
-            float(relative_filename[7:9])/10,  # logg
-            float(relative_filename[10:12])/10 * (-1 if relative_filename[9] == 'M' else 1)  # abun
-        ]
-
-
-class PhoenixModelAtmosphere(ModelAtmosphere):
-    """
-    Phoenix (Husser et al. 2012) model atmosphere.
-
-    The Phoenix model atmosphere is a grid of model atmospheres computed by
-    Husser et al. (2012). The grid is defined by effective temperature (teff),
-    surface gravity (logg), and chemical abundance (abun). The intensities are
-    computed for 37 angles between 500 and 26000 Angstroms.
-    """
-
-    def __init__(self, path):
-        super().__init__('phoenix', path)
-
-    mus = np.array([
-        0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04,
-        0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
-        0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
-    ])
-    wls = np.arange(500., 26000.)/1e10  # AA -> m
-    units = 1  # W/m^3
-
-    def parse_rules(self, relative_filename):
-        return [
-            float(relative_filename[1:6]),  # teff
-            float(relative_filename[7:11]),  # logg
-            float(relative_filename[12:16])  # abun
-        ]
-
-
-class TMAPModelAtmosphere(ModelAtmosphere):
-    """
-    TMAP model atmosphere.
-    """
-
-    def __init__(self, path):
-        super().__init__('tmap', path)
-        self.wls = np.load(path + '/wavelengths.npy')  # in meters
-
-    basic_axis_names = ['teffs', 'loggs']
-    associated_axis_names = ['mus']
-
-    mus = np.array([
-        0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
-        0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
-        0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
-        0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
-        0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
-        0.99280576, 0.99863193, 1.
-    ])
-    units = 1  # W/m^3
-
-    def parse_rules(self, relative_filename):
-        pars = re.split('[TGA.]+', relative_filename)
-        return [
-            float(pars[1]),  # teff
-            float(pars[2])/100  # logg
-        ]
-
-
 def _dict_without_keys(d, skip_keys=[]):
     return {k: v for k, v in d.items() if k not in skip_keys}
 
@@ -433,15 +154,14 @@ class Passband:
 
         ```py pb.compute_blackbody_intensities() ```
 
-        Step #3: compute Castelli & Kurucz (2004) intensities. To do this, the
-        tables/ck2004 directory needs to be populated with non-filtered
-        intensities available for download from %static%/ck2004.tar.
+        Step #3: instantiate a model atmosphere object and compute intensities:
 
-        ```py atmdir =
-        os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-        'tables/ck2004')) pb.compute_ck2004_response(atmdir) ```
+        ```py atm = CK2004ModelAtmosphere('path/to/ck2004')
+        pb.compute_intensities(atm) ```
 
-        Step #4: -- optional -- import WD tables for comparison. This can only
+        Step #4: repeat step #3 for other model atmospheres.
+
+        Step #5: -- optional -- import WD tables for comparison. This can only
         be done if the passband is in the list of supported passbands in WD.
         The WD index of the passband is passed to the import_wd_atmcof()
         function below as the last argument.
@@ -452,7 +172,7 @@ class Passband:
         atmdir+'/atmcof.dat') pb.import_wd_atmcof(atmdir+'/atmcofplanck.dat',
         atmdir+'/atmcof.dat', 7) ```
 
-        Step #5: save the passband file:
+        Step #6: save the passband file:
 
         ```py atmdir =
         os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -718,44 +438,75 @@ class Passband:
             data.append(fits.table_to_hdu(Table({'rv': axes[2]}, meta={'extname': 'BB_RVS'})))
 
         # axes:
-        for atm, prefix in atm_tables.items():
-            if f'{atm}:Imu' in self.content:
-                teffs, loggs, abuns, mus = self.ndp[atm].axes + self.ndp[atm].table['imu@photon'][0]
-                data.append(fits.table_to_hdu(Table({'teff': teffs}, meta={'extname': f'{prefix}_TEFFS'})))
-                data.append(fits.table_to_hdu(Table({'logg': loggs}, meta={'extname': f'{prefix}_LOGGS'})))
-                data.append(fits.table_to_hdu(Table({'abun': abuns}, meta={'extname': f'{prefix}_ABUNS'})))
-                data.append(fits.table_to_hdu(Table({'mu': mus}, meta={'extname': f'{prefix}_MUS'})))
+        for atm in _atmtable:
+            if f'{atm.name}:Imu' in self.content:
+                basic_axes = self.ndp[atm.name].axes
+                associated_axes = self.ndp[atm.name].table['imu@photon'][0]
+                if f'{atm.name}:ext' in self.content:
+                    associated_axes += self.ndp[atm.name].table['ext@photon'][0]
 
-                if f'{atm}:ext' in self.content:
-                    ebvs, rvs = self.ndp[atm].table['ext@photon'][0]
-                    data.append(fits.table_to_hdu(Table({'ebv': ebvs}, meta={'extname': f'{prefix}_EBVS'})))
-                    data.append(fits.table_to_hdu(Table({'rv': rvs}, meta={'extname': f'{prefix}_RVS'})))
+                for name, axis in zip(atm.basic_axis_names + atm.associated_axis_names, basic_axes + associated_axes):
+                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix.upper()}_{name.upper()}'})))
+
+        # for atm, prefix in atm_tables.items():
+        #     if f'{atm}:Imu' in self.content:
+        #         teffs, loggs, abuns, mus = self.ndp[atm].axes + self.ndp[atm].table['imu@photon'][0]
+        #         data.append(fits.table_to_hdu(Table({'teff': teffs}, meta={'extname': f'{prefix}_TEFFS'})))
+        #         data.append(fits.table_to_hdu(Table({'logg': loggs}, meta={'extname': f'{prefix}_LOGGS'})))
+        #         data.append(fits.table_to_hdu(Table({'abun': abuns}, meta={'extname': f'{prefix}_ABUNS'})))
+        #         data.append(fits.table_to_hdu(Table({'mu': mus}, meta={'extname': f'{prefix}_MUS'})))
+
+        #         if f'{atm}:ext' in self.content:
+        #             ebvs, rvs = self.ndp[atm].table['ext@photon'][0]
+        #             data.append(fits.table_to_hdu(Table({'ebv': ebvs}, meta={'extname': f'{prefix}_EBVS'})))
+        #             data.append(fits.table_to_hdu(Table({'rv': rvs}, meta={'extname': f'{prefix}_RVS'})))
 
         # grids:
         if 'blackbody:ext' in self.content:
             data.append(fits.ImageHDU(self.ndp['blackbody'].table['ext@energy'][1], name='BBEGRID'))
             data.append(fits.ImageHDU(self.ndp['blackbody'].table['ext@photon'][1], name='BBPGRID'))
 
-        for atm, prefix in atm_tables.items():
-            if f'{atm}:Imu' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm].table['imu@energy'][1], name=f'{prefix}FEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm].table['imu@photon'][1], name=f'{prefix}FPGRID'))
+        for atm in _atmtable:
+            if f'{atm.name}:Imu' in self.content:
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy'][1], name=f'{atm.prefix.upper()}FEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon'][1], name=f'{atm.prefix.upper()}FPGRID'))
 
                 if export_inorm_tables:
-                    data.append(fits.ImageHDU(self.ndp[atm].table['imu@energy'][1][..., -1, :], name=f'{prefix}NEGRID'))
-                    data.append(fits.ImageHDU(self.ndp[atm].table['imu@photon'][1][..., -1, :], name=f'{prefix}NPGRID'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy'][1][..., -1, :], name=f'{atm.prefix.upper()}NEGRID'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon'][1][..., -1, :], name=f'{atm.prefix.upper()}NPGRID'))
 
-            if f'{atm}:ld' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm].table['ld@energy'][1], name=f'{prefix}LEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm].table['ld@photon'][1], name=f'{prefix}LPGRID'))
+            if f'{atm.name}:ld' in self.content:
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@energy'][1], name=f'{atm.prefix.upper()}LEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@photon'][1], name=f'{atm.prefix.upper()}LPGRID'))
 
-            if f'{atm}:ldint' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm].table['ldint@energy'][1], name=f'{prefix}IEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm].table['ldint@photon'][1], name=f'{prefix}IPGRID'))
+            if f'{atm.name}:ldint' in self.content:
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ldint@energy'][1], name=f'{atm.prefix.upper()}IEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ldint@photon'][1], name=f'{atm.prefix.upper()}IPGRID'))
 
-            if f'{atm}:ext' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm].table['ext@energy'][1], name=f'{prefix}XEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm].table['ext@photon'][1], name=f'{prefix}XPGRID'))
+            if f'{atm.name}:ext' in self.content:
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy'][1], name=f'{atm.prefix.upper()}XEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon'][1], name=f'{atm.prefix.upper()}XPGRID'))
+
+        # for atm, prefix in atm_tables.items():
+        #     if f'{atm}:Imu' in self.content:
+        #         data.append(fits.ImageHDU(self.ndp[atm].table['imu@energy'][1], name=f'{prefix}FEGRID'))
+        #         data.append(fits.ImageHDU(self.ndp[atm].table['imu@photon'][1], name=f'{prefix}FPGRID'))
+
+        #         if export_inorm_tables:
+        #             data.append(fits.ImageHDU(self.ndp[atm].table['imu@energy'][1][..., -1, :], name=f'{prefix}NEGRID'))
+        #             data.append(fits.ImageHDU(self.ndp[atm].table['imu@photon'][1][..., -1, :], name=f'{prefix}NPGRID'))
+
+        #     if f'{atm}:ld' in self.content:
+        #         data.append(fits.ImageHDU(self.ndp[atm].table['ld@energy'][1], name=f'{prefix}LEGRID'))
+        #         data.append(fits.ImageHDU(self.ndp[atm].table['ld@photon'][1], name=f'{prefix}LPGRID'))
+
+        #     if f'{atm}:ldint' in self.content:
+        #         data.append(fits.ImageHDU(self.ndp[atm].table['ldint@energy'][1], name=f'{prefix}IEGRID'))
+        #         data.append(fits.ImageHDU(self.ndp[atm].table['ldint@photon'][1], name=f'{prefix}IPGRID'))
+
+        #     if f'{atm}:ext' in self.content:
+        #         data.append(fits.ImageHDU(self.ndp[atm].table['ext@energy'][1], name=f'{prefix}XEGRID'))
+        #         data.append(fits.ImageHDU(self.ndp[atm].table['ext@photon'][1], name=f'{prefix}XPGRID'))
 
         pb = fits.HDUList(data)
         pb.writeto(archive, overwrite=overwrite)
@@ -1166,7 +917,8 @@ class Passband:
 
         Arguments
         ----------
-        * `atm` (<ModelAtmosphere> instance): model atmosphere instance
+        * `atm` (<ModelAtmosphere> instance): model atmosphere to use for the
+            computation.
         * `include_ld` (bool, optional, default=True): set to True to include
             limb darkening coefficients in the computation. This will also
             calculate and tabulate integrals of the piecewise linear limb
@@ -1366,7 +1118,7 @@ class Passband:
             raise ValueError(f'ld_func={ld_func} is invalid; valid options are {s.keys()}.')
 
         if f'{ldatm}:ld' not in self.content:
-            raise ValueError(f'Limb darkening coefficients for ldatm={ldatm} are not available; please compute them first.')
+            raise ValueError(f'Limb darkening coefficients for ldatm={ldatm} are not available.')
 
         ld_coeffs = self.ndp[ldatm].ndpolate(f'ld@{intens_weighting}', query_pts, extrapolation_method=ld_extrapolation_method)['interps']
         return ld_coeffs[s[ld_func]]
