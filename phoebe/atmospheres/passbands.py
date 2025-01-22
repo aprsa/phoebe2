@@ -442,24 +442,16 @@ class Passband:
             if f'{atm.name}:Imu' in self.content:
                 basic_axes = self.ndp[atm.name].axes
                 associated_axes = self.ndp[atm.name].table['imu@photon'][0]
-                if f'{atm.name}:ext' in self.content:
-                    associated_axes += self.ndp[atm.name].table['ext@photon'][0]
 
                 for name, axis in zip(atm.basic_axis_names + atm.associated_axis_names, basic_axes + associated_axes):
                     data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix.upper()}_{name.upper()}'})))
 
-        # for atm, prefix in atm_tables.items():
-        #     if f'{atm}:Imu' in self.content:
-        #         teffs, loggs, abuns, mus = self.ndp[atm].axes + self.ndp[atm].table['imu@photon'][0]
-        #         data.append(fits.table_to_hdu(Table({'teff': teffs}, meta={'extname': f'{prefix}_TEFFS'})))
-        #         data.append(fits.table_to_hdu(Table({'logg': loggs}, meta={'extname': f'{prefix}_LOGGS'})))
-        #         data.append(fits.table_to_hdu(Table({'abun': abuns}, meta={'extname': f'{prefix}_ABUNS'})))
-        #         data.append(fits.table_to_hdu(Table({'mu': mus}, meta={'extname': f'{prefix}_MUS'})))
+            if f'{atm.name}:ext' in self.content:
+                basic_axes = self.ndp[atm.name].axes
+                associated_axes = self.ndp[atm.name].table['ext@photon'][0]
 
-        #         if f'{atm}:ext' in self.content:
-        #             ebvs, rvs = self.ndp[atm].table['ext@photon'][0]
-        #             data.append(fits.table_to_hdu(Table({'ebv': ebvs}, meta={'extname': f'{prefix}_EBVS'})))
-        #             data.append(fits.table_to_hdu(Table({'rv': rvs}, meta={'extname': f'{prefix}_RVS'})))
+                for name, axis in zip(atm.basic_axis_names + atm.associated_axis_names, basic_axes + associated_axes):
+                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix.upper()}_{name.upper()}'})))
 
         # grids:
         if 'blackbody:ext' in self.content:
@@ -486,27 +478,6 @@ class Passband:
             if f'{atm.name}:ext' in self.content:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy'][1], name=f'{atm.prefix.upper()}XEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon'][1], name=f'{atm.prefix.upper()}XPGRID'))
-
-        # for atm, prefix in atm_tables.items():
-        #     if f'{atm}:Imu' in self.content:
-        #         data.append(fits.ImageHDU(self.ndp[atm].table['imu@energy'][1], name=f'{prefix}FEGRID'))
-        #         data.append(fits.ImageHDU(self.ndp[atm].table['imu@photon'][1], name=f'{prefix}FPGRID'))
-
-        #         if export_inorm_tables:
-        #             data.append(fits.ImageHDU(self.ndp[atm].table['imu@energy'][1][..., -1, :], name=f'{prefix}NEGRID'))
-        #             data.append(fits.ImageHDU(self.ndp[atm].table['imu@photon'][1][..., -1, :], name=f'{prefix}NPGRID'))
-
-        #     if f'{atm}:ld' in self.content:
-        #         data.append(fits.ImageHDU(self.ndp[atm].table['ld@energy'][1], name=f'{prefix}LEGRID'))
-        #         data.append(fits.ImageHDU(self.ndp[atm].table['ld@photon'][1], name=f'{prefix}LPGRID'))
-
-        #     if f'{atm}:ldint' in self.content:
-        #         data.append(fits.ImageHDU(self.ndp[atm].table['ldint@energy'][1], name=f'{prefix}IEGRID'))
-        #         data.append(fits.ImageHDU(self.ndp[atm].table['ldint@photon'][1], name=f'{prefix}IPGRID'))
-
-        #     if f'{atm}:ext' in self.content:
-        #         data.append(fits.ImageHDU(self.ndp[atm].table['ext@energy'][1], name=f'{prefix}XEGRID'))
-        #         data.append(fits.ImageHDU(self.ndp[atm].table['ext@photon'][1], name=f'{prefix}XPGRID'))
 
         pb = fits.HDUList(data)
         pb.writeto(archive, overwrite=overwrite)
@@ -594,43 +565,47 @@ class Passband:
                     self.ndp['blackbody'].register('ext@photon', (axes[1], axes[2]), hdul['bbegrid'].data)
                     self.ndp['blackbody'].register('ext@energy', (axes[1], axes[2]), hdul['bbpgrid'].data)
 
-                for atm, prefix in atm_tables.items():
-                    if f'{atm}:Imu' in self.content:
-                        basic_axes = (
-                            np.array(list(hdul[f'{prefix}_teffs'].data['teff'])),
-                            np.array(list(hdul[f'{prefix}_loggs'].data['logg'])),
-                            np.array(list(hdul[f'{prefix}_abuns'].data['abun'])),
-                        )
-                        mus = np.array(list(hdul[f'{prefix}_mus'].data['mu']))
+                for atm in _atmtable:
+                    if f'{atm.name}:Imu' in self.content:
+                        try:
+                            basic_axes = tuple(
+                                [np.array(list(hdul[f'{atm.prefix}_{name.upper()}'].data[name])) for name in atm.basic_axis_names]
+                            )
+                        except KeyError:
+                            # old passbands used singular instead of plural, i.e. 'teff' instead of 'teffs':
+                            basic_axes = tuple(
+                                [np.array(list(hdul[f'{atm.prefix}_{name.upper()}'].data[name[:-1]])) for name in atm.basic_axis_names]
+                            )
 
-                        atm_energy_grid = hdul[f'{prefix}fegrid'].data
-                        atm_photon_grid = hdul[f'{prefix}fpgrid'].data
+                        atm_photon_grid = hdul[f'{atm.prefix}FPGRID'].data
+                        atm_energy_grid = hdul[f'{atm.prefix}FEGRID'].data
 
                         # ndpolator instance for interpolating and extrapolating:
-                        self.ndp[atm] = ndpolator.Ndpolator(basic_axes=basic_axes)
+                        self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
 
                         # normal passband intensities:
-                        self.ndp[atm].register('inorm@photon', None, atm_photon_grid[...,-1,:])
-                        self.ndp[atm].register('inorm@energy', None, atm_energy_grid[...,-1,:])
+                        self.ndp[atm.name].register('inorm@photon', None, atm_photon_grid[...,-1,:])
+                        self.ndp[atm.name].register('inorm@energy', None, atm_energy_grid[...,-1,:])
 
                         # specific passband intensities:
-                        self.ndp[atm].register('imu@photon', (mus,), atm_photon_grid)
-                        self.ndp[atm].register('imu@energy', (mus,), atm_energy_grid)
+                        self.ndp[atm.name].register('imu@photon', (atm.mus,), atm_photon_grid)
+                        self.ndp[atm.name].register('imu@energy', (atm.mus,), atm_energy_grid)
 
-                    if f'{atm}:ld' in self.content:
-                        self.ndp[atm].register('ld@photon', None, hdul[f'{prefix}legrid'].data)
-                        self.ndp[atm].register('ld@energy', None, hdul[f'{prefix}lpgrid'].data)
+                    if f'{atm.name}:ld' in self.content:
+                        self.ndp[atm.name].register('ld@photon', None, hdul[f'{atm.prefix}legrid'].data)
+                        self.ndp[atm.name].register('ld@energy', None, hdul[f'{atm.prefix}lpgrid'].data)
 
-                    if f'{atm}:ldint' in self.content:
-                        self.ndp[atm].register('ldint@photon', None, hdul[f'{prefix}iegrid'].data)
-                        self.ndp[atm].register('ldint@energy', None, hdul[f'{prefix}ipgrid'].data)
+                    if f'{atm.name}:ldint' in self.content:
+                        self.ndp[atm.name].register('ldint@photon', None, hdul[f'{atm.prefix}iegrid'].data)
+                        self.ndp[atm.name].register('ldint@energy', None, hdul[f'{atm.prefix}ipgrid'].data)
 
                     if f'{atm}:ext' in self.content:
-                        ebvs = np.array(list(hdul[f'{prefix}_ebvs'].data['ebv']))
-                        rvs = np.array(list(hdul[f'{prefix}_rvs'].data['rv']))
+                        # associated axes:
+                        ebvs = np.array(list(hdul[f'{atm.prefix}_ebvs'].data['ebvs']))
+                        rvs = np.array(list(hdul[f'{atm.prefix}_rvs'].data['rvs']))
 
-                        self.ndp[atm].register('ext@photon', (ebvs, rvs), hdul[f'{prefix}XEGRID'].data)
-                        self.ndp[atm].register('ext@energy', (ebvs, rvs), hdul[f'{prefix}XPGRID'].data)
+                        self.ndp[atm].register('ext@photon', (ebvs, rvs), hdul[f'{atm.prefix}XEGRID'].data)
+                        self.ndp[atm].register('ext@energy', (ebvs, rvs), hdul[f'{atm.prefix}XPGRID'].data)
 
         return self
 
