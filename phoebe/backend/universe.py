@@ -5,7 +5,7 @@ from math import sqrt, sin, cos, acos, atan2, trunc, pi
 import sys, os
 import copy
 
-from phoebe.atmospheres import passbands
+from phoebe.atmospheres import models, passbands
 from phoebe.distortions import roche, rotstar
 from phoebe.backend import eclipse, oc_geometry, mesh, mesh_wd
 from phoebe.utils import _bytes
@@ -1804,19 +1804,16 @@ class Star(Body):
             # NOTE: we'll do another check when calling pb.Imu, but we'll also
             # change the value here for the debug logger
             ld_func = 'interp'
-            ldatm = atm
+            ldatm = models.atm_from_name(atm)
         elif ld_mode == 'lookup':
             if ld_coeffs_source == 'auto':
-                ldatm = 'ck2004' if atm in ['blackbody', 'extern_atmx', 'extern_planckint'] else atm
+                ldatm = models.CK2004ModelAtmosphere if atm in ['blackbody', 'extern_atmx', 'extern_planckint'] else models.atm_from_name(atm)
             else:
-                ldatm = ld_coeffs_source
+                ldatm = models.atm_from_name(ld_coeffs_source)
         elif ld_mode == 'manual':
-            ldatm = 'none'
+            ldatm = None
         else:
             raise NotImplementedError
-
-
-
 
         logger.debug("ld_func={}, ld_coeffs={}, atm={}, ldatm={}".format(ld_func, ld_coeffs, atm, ldatm))
 
@@ -1825,11 +1822,11 @@ class Star(Body):
         if lc_method == 'numerical':
             pb = passbands.get_passband(passband)
 
-            if ldatm != 'none' and '{}:ldint'.format(ldatm) not in pb.content:
+            if ldatm is not None and f'{ldatm.name}:ldint' not in pb.content:
                 if ld_mode == 'lookup':
-                    raise ValueError("{} not supported for limb-darkening with {}:{} passband.  Try changing the value of the ld_coeffs_source parameter".format(ldatm, pb.pbset, pb.pbname))
+                    raise ValueError(f'{ldatm.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the ld_coeffs_source parameter')
                 else:
-                    raise ValueError("{} not supported for limb-darkening with {}:{} passband.  Try changing the value of the atm parameter".format(ldatm, pb.pbset, pb.pbname))
+                    raise ValueError(f'{ldatm.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the atm parameter')
 
             if intens_weighting == 'photon':
                 ptfarea = pb.ptf_photon_area/pb.h/pb.c
@@ -1858,7 +1855,7 @@ class Star(Body):
 
             abs_normal_intensities = pb.Inorm(
                 query_pts=query_pts,
-                atm=atm,
+                atm=models.atm_from_name(atm),
                 ldatm=ldatm,
                 ldint=ldint,
                 ld_func=ld_func,
@@ -1879,7 +1876,7 @@ class Star(Body):
 
             abs_intensities = pb.Imu(
                 query_pts=query_pts,
-                atm=atm,
+                atm=models.atm_from_name(atm),
                 ldatm=ldatm,
                 ldint=ldint,
                 ld_func=ld_func if ld_mode != 'interp' else ld_mode,
@@ -1911,7 +1908,7 @@ class Star(Body):
                 query_pts = np.c_[query_pts[:,:-1], np.full_like(query_pts[:,0], fill_value=extinct), np.full_like(query_pts[:,0], fill_value=Rv)]
                 extinct_factors = pb.interpolate_extinct(
                     query_pts=query_pts,
-                    atm=atm,
+                    atm=models.atm_from_name(atm),
                     intens_weighting=intens_weighting,
                     extrapolation_method=atm_extrapolation_method
                 )

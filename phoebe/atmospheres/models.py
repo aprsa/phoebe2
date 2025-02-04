@@ -90,13 +90,32 @@ class ModelAtmosphere:
 
         self.path = None
 
-        if basic_axes is None:
-            raise ValueError('basic_axes must be defined.')
-        if associated_axes is None:
-            raise ValueError('associated_axes must be defined.')
+        # the model needs to either provide tabulated intensities or
+        # a function to compute them. If the model provides tabulated
+        # intensities, basic_axes must be defined; if it provides a
+        # function, basic_axes will be automatically determined from
+        # axis definitions via class attributes.
+
+        if hasattr(self, 'intensity') and callable(self.intensity):
+            # the model provides a function to compute intensities.
+            for axis_name in self.basic_axis_names:
+                if not hasattr(self, axis_name):
+                    raise ValueError(f'Model atmosphere named basic axis "{axis_name}" but it did not define it.')
+            basic_axes = tuple([getattr(self, axis_name) for axis_name in self.basic_axis_names])
+        else:
+            if basic_axes is None:
+                raise ValueError('basic_axes must be defined.')
+            if associated_axes is None:
+                raise ValueError('associated_axes must be defined.')
 
         self.basic_axes = basic_axes
         self.associated_axes = associated_axes
+
+    def __repr__(self):
+        return self.name
+
+    def __str__(self):
+        return self.name
 
     def register(self):
         """
@@ -174,6 +193,17 @@ class ModelAtmosphere:
         * a copy of the added axis.
         """
 
+        if name in self.basic_axis_names:
+            raise ValueError(f"Axis name '{name}' already defined as a basic axis.")
+        if name in self.associated_axis_names:
+            raise ValueError(f"Axis name '{name}' already defined as an associated axis.")
+
+        if self.associated_axis_names is None:
+            self.associated_axis_names = []
+
+        if self.associated_axes is None:
+            self.associated_axes = ()
+
         self.associated_axis_names += [name,]
         self.associated_axes += (axis,)
         setattr(self, name, axis)
@@ -246,15 +276,14 @@ class BlackbodyModelAtmosphere(ModelAtmosphere):
     Blackbody model atmosphere.
 
     The blackbody model atmosphere is a simple model atmosphere that assumes
-    the object is a blackbody. The grid is defined by effective temperature
-    (teff).
+    the object is a blackbody. The grid is defined by a single axis,
+    effective temperature (teffs).
     """
 
     name = 'blackbody'
     prefix = 'bb'
 
     basic_axis_names = ['teffs']
-    associated_axis_names = []
     teffs = 10**np.linspace(2.5, 5.7, 97)  # this corresponds to the 316K-501187K range.
 
     def __init__(self, *args, **kwargs):
@@ -262,6 +291,21 @@ class BlackbodyModelAtmosphere(ModelAtmosphere):
 
     def limb_treatment(self, intensities):
         return intensities
+
+    def intensity(self, wls):
+        """
+        Computes blackbody intensities.
+
+        Arguments
+        ----------
+        * `wls` (array): wavelengths
+
+        Returns
+        --------
+        * an array of intensities.
+        """
+
+        return 2 * 6.62607015e-34 * 2.99792458e8**2 / wls**5 / (np.exp(6.62607015e-34 * 2.99792458e8 / (wls * 1.380649e-23 * self.teffs[:, None])) - 1)
 
 
 class CK2004ModelAtmosphere(ModelAtmosphere):
@@ -329,38 +373,57 @@ class PhoenixModelAtmosphere(ModelAtmosphere):
         ]
 
 
-class TMAPModelAtmosphere(ModelAtmosphere):
-    """
-    TMAP model atmosphere.
-    """
+# class TMAPModelAtmosphere(ModelAtmosphere):
+#     """
+#     TMAP model atmosphere.
+#     """
 
-    name = 'tmap'
-    prefix = 'tm'
+#     name = 'tmap'
+#     prefix = 'tm'
 
-    basic_axis_names = ['teffs', 'loggs']
-    associated_axis_names = ['mus']
+#     basic_axis_names = ['teffs', 'loggs']
+#     associated_axis_names = ['mus']
 
-    mus = np.array([
-        0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
-        0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
-        0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
-        0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
-        0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
-        0.99280576, 0.99863193, 1.
-    ])
-    units = 1  # W/m^3
+#     mus = np.array([
+#         0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
+#         0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
+#         0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
+#         0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
+#         0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
+#         0.99280576, 0.99863193, 1.
+#     ])
+#     units = 1  # W/m^3
 
-    def __init__(self, *args, **kwargs):
-        super().__init__('tmap', *args, **kwargs)
-        self.wls = np.load(kwargs['path'] + '/wavelengths.npy')  # in meters
+#     def __init__(self, *args, **kwargs):
+#         super().__init__('tmap', *args, **kwargs)
+#         self.wls = np.load(kwargs['path'] + '/wavelengths.npy')  # in meters
 
-    def parse_rules(self, relative_filename):
-        pars = re.split('[TGA.]+', relative_filename)
-        return [
-            float(pars[1]),  # teff
-            float(pars[2])/100  # logg
-        ]
+#     def parse_rules(self, relative_filename):
+#         pars = re.split('[TGA.]+', relative_filename)
+#         return [
+#             float(pars[1]),  # teff
+#             float(pars[2])/100  # logg
+#         ]
 
 
 # global model atmosphere table:
 _atmtable = ModelAtmosphere.__subclasses__()
+
+
+def atm_from_name(name):
+    """
+    Returns a model atmosphere class from its name.
+
+    Arguments
+    ----------
+    * `name` (string): name of the model atmosphere
+
+    Returns
+    --------
+    * the model atmosphere class
+    """
+
+    for atm in _atmtable:
+        if atm.name == name:
+            return atm
+    return None
