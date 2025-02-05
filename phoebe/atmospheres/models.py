@@ -24,11 +24,6 @@ class ModelAtmosphere:
     * `basic_axis_names` (list): names of the basic axes; basic axes are
         axes that span the basic n-dimensional model atmosphere grid. The grid
         can be sparsely populated, but it must be regular.
-    * `associated_axis_names` (list): names of the associated axes; associated
-        axes are axes that are not part of the basic grid, but are associated
-        with it. For example, the mus axis is associated with the basic grid
-        of teffs, loggs, and abuns. Associated axes must be fully defined in
-        all basic grid nodes.
     * `mus` (array): specific angles, mu=cos(theta), where theta is the angle
         between the observer and the surface normal.
     * `wls` (array): wavelengths of the model atmosphere intensities.
@@ -46,15 +41,11 @@ class ModelAtmosphere:
 
     When a model atmosphere is instantiated via the from_path() method, the basic
     axes are populated with unique values from the filenames of the atmosphere
-    fits files. Associated axes are populated from the fits file contents. The
-    axes are then exported as numpy arrays. The model atmosphere can also be
-    extended with additional associated axes (for example, `ebvs` and `rvs` for
-    extincted intensities).
+    fits files. The axes are then exported as numpy arrays.
 
     Attributes that are automatically populated:
 
     * `basic_axes` (tuple): tuple of numpy arrays for basic axes
-    * `associated_axes` (tuple): tuple of numpy arrays for associated axes
 
     In the case of from_path() instantiation, the following attributes are
     also populated:
@@ -64,12 +55,11 @@ class ModelAtmosphere:
     * `indices` (array): array of indices for all defined nodes in the model
         atmosphere
     * `[axis_name]` (array): numpy array for each axis, where the name is
-        automatically inferred from the basic and associated axis names
+        automatically inferred from the basic axis names
 
     Arguments
     ----------
     * `basic_axes` (tuple of ndarrays): values of the basic axes
-    * `associated_axes` (tuple of ndarrays): values of the associated axes
     * `from_path` (bool): if True, the class is instantiated from a path
 
     Raises
@@ -82,9 +72,8 @@ class ModelAtmosphere:
 
     # default axes:
     basic_axis_names = ['teffs', 'loggs', 'abuns']
-    associated_axis_names = ['mus']
 
-    def __init__(self, basic_axes=None, associated_axes=None, from_path=False):
+    def __init__(self, basic_axes=None, from_path=False):
         if from_path:
             return
 
@@ -105,11 +94,8 @@ class ModelAtmosphere:
         else:
             if basic_axes is None:
                 raise ValueError('basic_axes must be defined.')
-            if associated_axes is None:
-                raise ValueError('associated_axes must be defined.')
 
         self.basic_axes = basic_axes
-        self.associated_axes = associated_axes
 
     def __repr__(self):
         return self.name
@@ -159,9 +145,8 @@ class ModelAtmosphere:
             for j, name in enumerate(self.basic_axis_names):
                 getattr(self, name)[i] = basic_node_values[j]
 
-        # export basic and associated axes:
+        # export basic axes:
         self.basic_axes = tuple([np.unique(getattr(self, name)) for name in self.basic_axis_names])
-        self.associated_axes = tuple([np.unique(getattr(self, name)) for name in self.associated_axis_names])
 
         # store all node indices:
         nodes = np.vstack([getattr(self, name) for name in self.basic_axis_names]).T
@@ -178,50 +163,6 @@ class ModelAtmosphere:
         """
 
         return NotImplementedError
-
-    def add_associated_axis(self, name, axis):
-        """
-        Adds an associated axis to the model atmosphere.
-
-        Arguments
-        ----------
-        * `name` (string): name of the axis
-        * `axis` (array): values of the axis
-
-        Returns
-        --------
-        * a copy of the added axis.
-        """
-
-        if name in self.basic_axis_names:
-            raise ValueError(f"Axis name '{name}' already defined as a basic axis.")
-        if name in self.associated_axis_names:
-            raise ValueError(f"Axis name '{name}' already defined as an associated axis.")
-
-        if self.associated_axis_names is None:
-            self.associated_axis_names = []
-
-        if self.associated_axes is None:
-            self.associated_axes = ()
-
-        self.associated_axis_names += [name,]
-        self.associated_axes += (axis,)
-        setattr(self, name, axis)
-
-    def remove_associated_axis(self, name):
-        """
-        Removes an associated axis from the model atmosphere.
-
-        Arguments
-        ----------
-        * `name` (string): name of the axis
-        """
-
-        if name in self.associated_axis_names:
-            idx = self.associated_axis_names.index(name)
-            self.associated_axis_names.pop(idx)
-            self.associated_axes = self.associated_axes[:idx] + self.associated_axes[idx+1:]
-            delattr(self, name)
 
     def add_axis_node(self, axis_name, axis_node):
         """
@@ -371,39 +312,6 @@ class PhoenixModelAtmosphere(ModelAtmosphere):
             float(relative_filename[7:11]),  # logg
             float(relative_filename[12:16])  # abun
         ]
-
-
-# class TMAPModelAtmosphere(ModelAtmosphere):
-#     """
-#     TMAP model atmosphere.
-#     """
-
-#     name = 'tmap'
-#     prefix = 'tm'
-
-#     basic_axis_names = ['teffs', 'loggs']
-#     associated_axis_names = ['mus']
-
-#     mus = np.array([
-#         0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
-#         0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
-#         0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
-#         0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
-#         0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
-#         0.99280576, 0.99863193, 1.
-#     ])
-#     units = 1  # W/m^3
-
-#     def __init__(self, *args, **kwargs):
-#         super().__init__('tmap', *args, **kwargs)
-#         self.wls = np.load(kwargs['path'] + '/wavelengths.npy')  # in meters
-
-#     def parse_rules(self, relative_filename):
-#         pars = re.split('[TGA.]+', relative_filename)
-#         return [
-#             float(pars[1]),  # teff
-#             float(pars[2])/100  # logg
-#         ]
 
 
 # global model atmosphere table:

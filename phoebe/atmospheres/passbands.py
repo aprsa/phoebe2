@@ -359,7 +359,7 @@ class Passband:
 
         self.add_to_history(f'passband transmission function updated.')
 
-    def save(self, archive, overwrite=True, update_timestamp=True, export_inorm_tables=False, export_legacy_comments=True):
+    def save(self, archive, overwrite=True, update_timestamp=True, export_inorm_tables=False, export_legacy_bb=False, export_legacy_comments=True):
         """
         Saves the passband file in the fits format.
 
@@ -395,14 +395,13 @@ class Passband:
         header['PTFORDER'] = self.ptf_order
         header['PTFEAREA'] = self.ptf_area
         header['PTFPAREA'] = self.ptf_photon_area
-
-        if export_inorm_tables:
-            self.content += [f'{atm}:Inorm' for atm in atm_tables.keys() if f'{atm}:Imu' in self.content]
-
-        header['CONTENT'] = str(self.content)
+        # header['CONTENT'] = str(self.content)
 
         if export_legacy_comments:
             header['COMMENTS'] = ''
+
+        # We build content from scratch to avoid any potential issues with unsupported tables:
+        content = []
 
         # Add history entries:
         for entry in self.history:
@@ -414,6 +413,8 @@ class Passband:
 
         if 'extern_planckint:Inorm' in self.content or 'extern_atmx:Inorm' in self.content:
             header['WD_IDX'] = self.extern_wd_idx
+            content.append('extern_planckint:Inorm')
+            content.append('extern_atmx:Inorm')
 
         data = []
 
@@ -434,14 +435,14 @@ class Passband:
                 basic_axes = self.ndp[atm.name].axes
                 associated_axes = self.ndp[atm.name].table['imu@photon'][0]
 
-                for name, axis in zip(atm.basic_axis_names + atm.associated_axis_names, basic_axes + associated_axes):
+                for name, axis in zip(atm.basic_axis_names + ['mus'], basic_axes + associated_axes):
                     data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
             if f'{atm.name}:ext' in self.content:
                 basic_axes = self.ndp[atm.name].axes
                 associated_axes = self.ndp[atm.name].table['ext@photon'][0]
 
-                for name, axis in zip(atm.basic_axis_names + atm.associated_axis_names, basic_axes + associated_axes):
+                for name, axis in zip(atm.basic_axis_names + ['ebvs', 'rvs'], basic_axes + associated_axes):
                     data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
         # grids:
@@ -449,26 +450,47 @@ class Passband:
             if f'{atm.name}:Inorm' in self.content:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy'][1], name=f'{atm.prefix.upper()}NEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon'][1], name=f'{atm.prefix.upper()}NPGRID'))
+                content.append(f'{atm.name}:Inorm')
 
             if f'{atm.name}:Imu' in self.content:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy'][1], name=f'{atm.prefix.upper()}FEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon'][1], name=f'{atm.prefix.upper()}FPGRID'))
+                content.append(f'{atm.name}:Imu')
 
-                if export_inorm_tables:
+                if export_inorm_tables and f'{atm.name}:Inorm' not in content:
                     data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy'][1][..., -1, :], name=f'{atm.prefix.upper()}NEGRID'))
                     data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon'][1][..., -1, :], name=f'{atm.prefix.upper()}NPGRID'))
+                    content.append(f'{atm.name}:Inorm')
 
             if f'{atm.name}:ld' in self.content:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@energy'][1], name=f'{atm.prefix.upper()}LEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@photon'][1], name=f'{atm.prefix.upper()}LPGRID'))
+                content.append(f'{atm.name}:ld')
 
             if f'{atm.name}:ldint' in self.content:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ldint@energy'][1], name=f'{atm.prefix.upper()}IEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ldint@photon'][1], name=f'{atm.prefix.upper()}IPGRID'))
+                content.append(f'{atm.name}:ldint')
 
             if f'{atm.name}:ext' in self.content:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy'][1], name=f'{atm.prefix.upper()}XEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon'][1], name=f'{atm.prefix.upper()}XPGRID'))
+                content.append(f'{atm.name}:ext')
+
+        # If legacy blackbody functions are requested, export them:
+        if export_legacy_bb:
+            if 'blackbody:Inorm' in self.content:
+                teffs = self.ndp['blackbody'].axes[0]
+                log10ints = np.log10(self.ndp['blackbody'].table['inorm@energy'][1])
+                bb_func_energy = interpolate.splrep(teffs, log10ints, s=0)
+                log10ints = np.log10(self.ndp['blackbody'].table['inorm@photon'][1])
+                bb_func_photon = interpolate.splrep(teffs, log10ints, s=0)
+
+                bb_func = Table({'teff': self._bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
+                data.append(fits.table_to_hdu(bb_func))
+
+        # All saved content has been syndicated to the content list:
+        header['CONTENT'] = str(content)
 
         pb = fits.HDUList(data)
         pb.writeto(archive, overwrite=overwrite)
@@ -658,104 +680,6 @@ class Passband:
         expterm = np.exp(hclkt)
         return hclkt * expterm/(expterm-1)
 
-    def new_parse_atm_datafiles(self, atm, path):
-        """
-        Provides rules for parsing atmosphere fits files containing data.
-
-        Arguments
-        ----------
-        * `atm` (string): model atmosphere name
-        * `path` (string): relative or absolute path to data files
-
-        Returns
-        -------
-        * `basic_axes` (dict of ndarrays): spanning axes of the model atmosphere
-            grid.
-        * `associated_axes` (dict of ndarrays): additional axes for the model
-            atmosphere grid. They are guaranteed to be defined for all non-null
-            combinations of basic axes.
-        * `models` (ndarray): all non-null combinations of basic axis elements
-        * `node_values` (dict of ndarrays): combinations of parameters for each
-            node in the grid.
-        * `mus` (array): axis of all unique specific angles
-        * `wls` (array): spectral energy distribution wavelengths
-        * `units` (float): conversion units from model atmosphere intensity
-          units to W/m^3.
-        """
-
-        models = glob.glob(path+'/*fits')
-        nmodels = len(models)
-
-        if atm == 'ck2004':
-            basic_axis_names = ['teffs', 'loggs', 'abuns']
-            associated_axis_names = ['mus']
-            parse_rules = lambda relative_filename: [
-                float(relative_filename[1:6]),  # teff
-                float(relative_filename[7:9])/10,  # logg
-                float(relative_filename[10:12])/10 * (-1 if relative_filename[9] == 'M' else 1)  # abun
-            ]
-            mus = np.array([
-                0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04,
-                0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
-                0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
-            ])
-            wls = np.arange(900., 39999.501, 0.5)/1e10  # AA -> m
-            units = 1e7  # erg/s/cm^2/A -> W/m^3
-
-        elif atm == 'phoenix':
-            basic_axis_names = ['teffs', 'loggs', 'abuns']
-            associated_axis_names = ['mus']
-            parse_rules = lambda relative_filename: [
-                float(relative_filename[1:6]),  # teff
-                float(relative_filename[7:11]),  # logg
-                float(relative_filename[12:16])  # abun
-            ]
-            mus = np.array([
-                0., 0.001, 0.002, 0.003, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.035, 0.04,
-                0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
-                0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
-            ])
-            wls = np.arange(500., 26000.)/1e10  # AA -> m
-            units = 1  # W/m^3
-        elif atm in ['tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO']:
-            basic_axis_names = ['teffs', 'loggs']
-            associated_axis_names = ['mus']
-            def parse_rules(relative_filename):
-                pars = re.split('[TGA.]+', relative_filename)
-                return [
-                    float(pars[1]),  # teff
-                    float(pars[2])/100  # logg
-                ]
-            mus = np.array([
-                0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
-                0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
-                0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
-                0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
-                0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
-                0.99280576, 0.99863193, 1.
-            ])
-            wls = np.load(path+'/wavelengths.npy')  # in meters
-            units = 1  # W/m^3
-        elif atm == 'tremblay':
-            basic_axis_names = ['teffs', 'loggs']
-            associated_axis_names = ['mus']
-            def parse_rules(relative_filename):
-                pars = re.split('[TGA.]+', relative_filename)
-                return [
-                    float(pars[1]),  # teff
-                    float(pars[2])/100,  # logg
-                ]
-            mus = np.array([
-                0., 0.0034357, 0.01801404, 0.04388279, 0.08044151, 0.12683405, 0.18197316,
-                0.2445665, 0.31314696, 0.38610707, 0.46173674, 0.53826326, 0.61389293,
-                0.68685304, 0.7554335, 0.81802684, 0.87316595, 0.91955849, 0.95611721,
-                0.98198596, 0.9965643, 1.
-            ])
-            wls = np.load(path+'/wavelengths.npy')  # in meters
-            units = 1  # W/m^3
-        else:
-            raise ValueError(f'atm={atm} is not supported.')
-
     def ld_func(self, mu=1.0, ld_coeffs=np.array([[0.5]]), ld_func='linear'):
         ld_coeffs = np.atleast_2d(ld_coeffs)
 
@@ -844,11 +768,13 @@ class Passband:
 
         if include_extinction:
             # add extinction axes:
-            atm.add_associated_axis('ebvs', ebvs or np.linspace(0., 3., 30))
-            atm.add_associated_axis('rvs', rvs or np.linspace(2., 6., 16))
+            if ebvs is None:
+                ebvs = np.linspace(0., 3., 30)
+            if rvs is None:
+                rvs = np.linspace(2., 6., 16)
 
             # initialize arrays for extincted intensities:
-            associated_axes = (atm.ebvs, atm.rvs)
+            associated_axes = (ebvs, rvs)
             grid_shape = tuple([len(axis) for axis in atm.basic_axes + associated_axes] + [1])
             ext_photon_grid = np.empty(shape=grid_shape)
             ext_energy_grid = np.empty_like(ext_photon_grid)
