@@ -128,6 +128,10 @@ class ModelAtmosphere:
         self = cls(from_path=True)
         self.path = path
 
+        #Check for wavelength file a la TMAP/Tremblay
+        if os.path.isfile(os.path.join(path,"wavelengths.npy")):
+            self.wls= np.load(os.path.join(path,"wavelengths.npy")) 
+
         try:
             self.models = glob.glob(os.path.join(path, '*fits'))
             self.nmodels = len(self.models)
@@ -313,6 +317,148 @@ class PhoenixModelAtmosphere(ModelAtmosphere):
             float(relative_filename[12:16])  # abun
         ]
 
+
+class TremblayModelAtmosphere(ModelAtmosphere):
+    """
+    Tremblay DA model atmosphere.
+    """
+
+    name = 'tremblay'
+    prefix = 'tr'
+
+    basic_axis_names = ['teffs', 'loggs']
+
+    mus = np.array([
+        0., 0.0034357 , 0.01801404, 0.04388279, 0.08044151, 0.12683405, 
+        0.18197316, 0.2445665 , 0.31314696, 0.38610707, 0.46173674, 
+        0.53826326, 0.61389293, 0.68685304, 0.7554335 , 0.81802684, 
+        0.87316595, 0.91955849, 0.95611721, 0.98198596, 0.9965643 , 1.
+    ])
+
+    units = 1  # W/m^3
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def parse_rules(self, relative_filename):
+        pars = re.split('[TGA.]+', relative_filename)
+        return [
+            float(pars[1]),  # teff
+            float(pars[2])/100  # logg
+        ]
+
+class TMAPDOModelAtmosphere(ModelAtmosphere):
+    """
+    TMAP model atmosphere.
+    """
+
+    name = 'tmap_DO'
+    prefix = 'to'
+
+    basic_axis_names = ['teffs', 'loggs']
+
+    mus = np.array([
+        0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
+        0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
+        0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
+        0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
+        0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
+        0.99280576, 0.99863193, 1.
+    ])
+
+    units = 1  # W/m^3
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def parse_rules(self, relative_filename):
+        pars = re.split('[TGA.]+', relative_filename)
+        return [
+            float(pars[1]),  # teff
+            float(pars[2])/100  # logg
+        ]
+    
+class TMAPDAModelAtmosphere(ModelAtmosphere):
+    """
+    TMAP model atmosphere.
+    """
+
+    name = 'tmap_DA'
+    prefix = 'ta'
+
+    basic_axis_names = ['teffs', 'loggs']
+
+    mus = np.array([
+        0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 0.05183939, 0.07531619,
+        0.10275816, 0.13390887, 0.16847785, 0.20614219, 0.24655013, 0.28932435,
+        0.33406564, 0.38035639, 0.42776398, 0.47584619, 0.52415388, 0.57223605,
+        0.6196437, 0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
+        0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302, 0.98238112,
+        0.99280576, 0.99863193, 1.
+    ])
+
+    units = 1  # W/m^3
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def parse_rules(self, relative_filename):
+        pars = re.split('[TGA.]+', relative_filename)
+        return [
+            float(pars[1]),  # teff
+            float(pars[2])/100  # logg
+        ]
+
+
+class TMAPsdOModelAtmosphere(ModelAtmosphere):
+    name = 'tmap_sdO'
+    prefix='ts'
+    basic_axis_names = ['teffs', 'loggs', 'abuns']
+
+    mus = np.array([0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 
+                    0.05183939, 0.07531619, 0.10275816, 0.13390887, 0.16847785,
+                    0.20614219, 0.24655013, 0.28932435, 0.33406564, 0.38035639,
+                    0.42776398, 0.47584619, 0.52415388, 0.57223605, 0.6196437,
+                    0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
+                    0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302,
+                    0.98238112, 0.99280576, 0.99863193, 1.])
+    units = 1  # W/m^3
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def parse_rules(self, relative_filename):
+        pars = re.split('[TGA.]+', relative_filename)
+        return [
+            float(pars[1]),  # teff
+            float(pars[2])/100,  # logg
+            float(pars[3])/100 #abun
+        ]
+
+class TMAPDAOModelAtmosphere(ModelAtmosphere):
+    name = 'tmap_DAO'
+    prefix='tm'
+    basic_axis_names = ['teffs', 'loggs', 'abuns']
+
+    mus = np.array([0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 
+                    0.05183939, 0.07531619, 0.10275816, 0.13390887, 0.16847785,
+                    0.20614219, 0.24655013, 0.28932435, 0.33406564, 0.38035639,
+                    0.42776398, 0.47584619, 0.52415388, 0.57223605, 0.6196437,
+                    0.66593427, 0.71067559, 0.75344991, 0.79385786, 0.83152216,
+                    0.86609102, 0.89724188, 0.92468378, 0.9481606,  0.96745302,
+                    0.98238112, 0.99280576, 0.99863193, 1.])
+    units = 1  # W/m^3
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def parse_rules(self, relative_filename):
+        pars = re.split('[TGA.]+', relative_filename)
+        return [
+            float(pars[1]),  # teff
+            float(pars[2])/100,  # logg
+            float(pars[3])/100 #abun
+        ]
 
 # global model atmosphere table:
 _atmtable = ModelAtmosphere.__subclasses__()
