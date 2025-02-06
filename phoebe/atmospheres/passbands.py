@@ -359,7 +359,7 @@ class Passband:
 
         self.add_to_history(f'passband transmission function updated.')
 
-    def save(self, archive, overwrite=True, update_timestamp=True, export_inorm_tables=False, export_legacy_bb=False, export_legacy_comments=True):
+    def save(self, archive, overwrite=True, update_timestamp=True, export_inorm_tables=False, export_legacy=False, export_legacy_comments=True):
         """
         Saves the passband file in the fits format.
 
@@ -374,6 +374,12 @@ class Passband:
             have been deprecated since phoebe 2.4; for backwards compatibility
             we still may need to export them to fits files so that pre-2.4
             versions can use the same passband files.
+        * `export_legacy` (bool, optional, default=False): pre-2.5 blackbody 
+            atmospheres were stored as BB_FUNC rather than BB_TEFFS; for 
+            backwards compatibility we may still need to export BB_FUNC to fits
+            so that pre-2.5 versions can use the same passbands.  Similarly,
+            the keys for ck2004 and phoenix tables changed in 2.5, this function
+            exports the tables with pre-2.5 keys.
         * `export_legacy_comments` (bool, optional, default=True): whether to
             export the dummy COMMENTS card (used in old passbands) in addition
             to the new COMMENT card.
@@ -422,26 +428,88 @@ class Passband:
 
         data.append(fits.table_to_hdu(Table(self.ptf_table, meta={'extname': 'PTFTABLE'})))
 
-        # axes:
-        for atm in models._atmtable:
-            if f'{atm.name}:Inorm' in self.content and f'{atm.name}:Imu' not in self.content:
-                basic_axes = self.ndp[atm.name].axes
+        # If legacy export is requested export blackbody function and atmosphere tables with correct keys:
+        if export_legacy:
+            if 'blackbody:Inorm' in self.content:
+                teffs = self.ndp['blackbody'].axes[0]
+                log10ints = np.log10(self.ndp['blackbody'].table['inorm@energy'][1])
+                bb_func_energy = interpolate.splrep(teffs, log10ints, s=0)
+                log10ints = np.log10(self.ndp['blackbody'].table['inorm@photon'][1])
+                bb_func_photon = interpolate.splrep(teffs, log10ints, s=0)
 
-                for name, axis in zip(atm.basic_axis_names, basic_axes):
-                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                bb_func = Table({'teff': bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
+                data.append(fits.table_to_hdu(bb_func))
 
-            if f'{atm.name}:Imu' in self.content:
-                basic_axes = self.ndp[atm.name].axes
-                associated_axes = self.ndp[atm.name].table['imu@photon'][0]
+                data.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@energy'][1], name='BBEGRID')) #Old files have BBEGRID instead of BBNEGRID
+                data.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@photon'][1], name='BBPGRID'))
+            
+            if 'blackbody:ext' in self.content:
+                teffs = self.ndp['blackbody'].axes
+                associated_axes = self.ndp['blackbody'].table['ext@photon'][0]
+                for name, axis in zip(['teffs','ebvs', 'rvs'], teffs + associated_axes):
+                    data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'bb_{name}'})))
+               
 
-                for name, axis in zip(atm.basic_axis_names + ['mus'], basic_axes + associated_axes):
-                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+            
+            if 'ck2004:Imu' in self.content:
+                basic_axes = self.ndp['ck2004'].axes
+                axis_names=['teffs','loggs','abuns']
+                if 'ck2004:Inorm' in self.content and 'ck2004:Imu' not in self.content:
+                    for name, axis in zip(axis_names, basic_axes):
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'ck_{name}'})))
 
-            if f'{atm.name}:ext' in self.content:
-                associated_axes = self.ndp[atm.name].table['ext@photon'][0]
+                if 'ck2004:Imu' in self.content:
+                    associated_axes = self.ndp['ck2004'].table['imu@photon'][0]
 
-                for name, axis in zip(['ebvs', 'rvs'], associated_axes):
-                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    for name, axis in zip(axis_names + ['mus'], basic_axes + associated_axes):
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'ck_{name}'})))
+
+                if 'ck2004:ext' in self.content:
+                    associated_axes = self.ndp['ck2004'].table['ext@photon'][0]
+
+                    for name, axis in zip(['ebvs', 'rvs'], associated_axes):
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'ck_{name}'})))
+
+            if 'phoenix:Imu' in self.content:
+                basic_axes = self.ndp['phoenix'].axes
+                axis_names=['teffs','loggs','abuns']
+                if 'phoenix:Inorm' in self.content and 'phoenix:Imu' not in self.content:
+                    for name, axis in zip(axis_names, basic_axes):
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'ph_{name}'})))
+
+                if 'phoenix:Imu' in self.content:
+                    associated_axes = self.ndp['phoenix'].table['imu@photon'][0]
+
+                    for name, axis in zip(axis_names + ['mus'], basic_axes + associated_axes):
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'ph_{name}'})))
+
+                if 'phoenix:ext' in self.content:
+                    associated_axes = self.ndp['phoenix'].table['ext@photon'][0]
+
+                    for name, axis in zip(['ebvs', 'rvs'], associated_axes):
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'ph_{name}'})))
+        
+
+        else:
+            for atm in models._atmtable:
+                if f'{atm.name}:Inorm' in self.content and f'{atm.name}:Imu' not in self.content:
+                    basic_axes = self.ndp[atm.name].axes
+
+                    for name, axis in zip(atm.basic_axis_names, basic_axes):
+                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+
+                if f'{atm.name}:Imu' in self.content:
+                    basic_axes = self.ndp[atm.name].axes
+                    associated_axes = self.ndp[atm.name].table['imu@photon'][0]
+
+                    for name, axis in zip(atm.basic_axis_names + ['mus'], basic_axes + associated_axes):
+                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+
+                if f'{atm.name}:ext' in self.content:
+                    associated_axes = self.ndp[atm.name].table['ext@photon'][0]
+
+                    for name, axis in zip(['ebvs', 'rvs'], associated_axes):
+                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
         # grids:
         for atm in models._atmtable:
@@ -474,18 +542,6 @@ class Passband:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy'][1], name=f'{atm.prefix.upper()}XEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon'][1], name=f'{atm.prefix.upper()}XPGRID'))
                 content.append(f'{atm.name}:ext')
-
-        # If legacy blackbody functions are requested, export them:
-        if export_legacy_bb:
-            if 'blackbody:Inorm' in self.content:
-                teffs = self.ndp['blackbody'].axes[0]
-                log10ints = np.log10(self.ndp['blackbody'].table['inorm@energy'][1])
-                bb_func_energy = interpolate.splrep(teffs, log10ints, s=0)
-                log10ints = np.log10(self.ndp['blackbody'].table['inorm@photon'][1])
-                bb_func_photon = interpolate.splrep(teffs, log10ints, s=0)
-
-                bb_func = Table({'teff': bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
-                data.append(fits.table_to_hdu(bb_func))
 
         # All saved content has been syndicated to the content list:
         primary_hdu.header['CONTENT'] = str(content)
