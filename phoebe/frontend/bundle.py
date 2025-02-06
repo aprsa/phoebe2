@@ -42,6 +42,7 @@ from phoebe.backend import universe as _universe
 from phoebe.solverbackends import solverbackends as _solverbackends
 from phoebe.distortions import roche
 from phoebe.frontend import io
+from phoebe.atmospheres import models
 from phoebe.atmospheres.passbands import list_installed_passbands, list_online_passbands, get_passband, update_passband, _timestamp_to_dt
 from phoebe import pool as _pool
 from phoebe.dependencies import distl as _distl
@@ -10262,14 +10263,15 @@ class Bundle(ParameterSet):
                     passband = self.get_value(qualifier='passband', dataset=ldcs_param.dataset, context='dataset', **_skip_filter_checks)
 
                 atm = self.get_value(qualifier='atm', compute=compute, component=ldcs_param.component, default='ck2004', atm=kwargs.get('atm', None), **_skip_filter_checks)
+                atm_model = models.atm_from_name(atm)
 
                 if ldcs == 'auto':
                     if atm in ['extern_atmx', 'extern_planckint', 'blackbody']:
-                        ldcs = 'ck2004'
+                        ldcs = models.CK2004ModelAtmosphere
                     else:
-                        ldcs = atm
+                        ldcs = atm_model
 
-                pb = get_passband(passband, content='{}:ld'.format(ldcs))
+                pb = get_passband(passband, content='{}:ld'.format(ldcs.name))
                 teff = self.get_value(qualifier='teff', component=ldcs_param.component, context='component', unit='K', **_skip_filter_checks)
                 logg = self.get_value(qualifier='logg', component=ldcs_param.component, context='component', **_skip_filter_checks)
                 abun = self.get_value(qualifier='abun', component=ldcs_param.component, context='component', **_skip_filter_checks)
@@ -10777,11 +10779,12 @@ class Bundle(ParameterSet):
                     pb = get_passband(passband, content=required_content)
 
                     query_pts = np.ascontiguousarray( ((teffs[component], loggs[component], abuns[component]),) )
+                    atm_model = models.atm_from_name(atms[component])
 
                     abs_normal_intensities = pb.Inorm(
                         query_pts=query_pts,
-                        atm=atms[component],
-                        ldatm=atms[component],
+                        atm=atm_model,
+                        ldatm=atm_model,
                         ldint=None,
                         ld_func=ld_func,
                         ld_coeffs=ld_coeffs,
@@ -10793,7 +10796,7 @@ class Bundle(ParameterSet):
 
                     ldint = pb.ldint(
                         query_pts=query_pts,
-                        ldatm=atms[component],
+                        ldatm=atm_model,
                         ld_func=ld_func,
                         ld_coeffs=ld_coeffs,
                         intens_weighting=intens_weighting,
