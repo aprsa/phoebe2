@@ -395,7 +395,6 @@ class Passband:
         header['PTFORDER'] = self.ptf_order
         header['PTFEAREA'] = self.ptf_area
         header['PTFPAREA'] = self.ptf_photon_area
-        # header['CONTENT'] = str(self.content)
 
         if export_legacy_comments:
             header['COMMENTS'] = ''
@@ -490,7 +489,7 @@ class Passband:
                 data.append(fits.table_to_hdu(bb_func))
 
         # All saved content has been syndicated to the content list:
-        header['CONTENT'] = str(content)
+        primary_hdu.header['CONTENT'] = str(content)
 
         pb = fits.HDUList(data)
         pb.writeto(archive, overwrite=overwrite)
@@ -550,7 +549,7 @@ class Passband:
             self.ptf_photon = lambda wl: interpolate.splev(wl, self.ptf_photon_func)
 
             if load_content:
-                if parse(self.phoebe_version) < parse('2.5'):
+                if parse(self.phoebe_version) < parse('2.5.0.alpha'):
                     print(f'{self.phoebe_version=}')
                     if 'blackbody:Inorm' in self.content:
                         # phoebe 2.5 passbands store BB_TEFFS axis, but pre-2.5 versions
@@ -783,7 +782,7 @@ class Passband:
             ax, bx = axbx[:,0], axbx[:,1]
 
             # The following code broadcasts arrays so that integration can be vectorized:
-            Alam = 10**(-0.4 * atm.ebvs[None, :, None] * (atm.rvs[None, None, :] * ax[:, None, None] + bx[:, None, None]))
+            Alam = 10**(-0.4 * ebvs[None, :, None] * (rvs[None, None, :] * ax[:, None, None] + bx[:, None, None]))
 
         if can_compute_intensity:
             ints = atm.intensity(wls)  # must be in in W/m^3
@@ -805,10 +804,10 @@ class Passband:
                 egrid = np.trapz(pbints_energy[:, :, None, None] * Alam[None, :, :, :], x=wls, axis=1) / np.trapz(pbints_energy[:, :, None, None], x=wls, axis=1)
                 pgrid = np.trapz(pbints_photon[:, :, None, None] * Alam[None, :, :, :], x=wls, axis=1) / np.trapz(pbints_photon[:, :, None, None], x=wls, axis=1)
 
-                ext_energy_grid = egrid.reshape(len(atm.teffs), len(atm.ebvs), len(atm.rvs), 1)
-                ext_photon_grid = pgrid.reshape(len(atm.teffs), len(atm.ebvs), len(atm.rvs), 1)
-                self.ndp[atm.name].register('ext@energy', (atm.ebvs, atm.rvs), ext_energy_grid)
-                self.ndp[atm.name].register('ext@photon', (atm.ebvs, atm.rvs), ext_photon_grid)
+                ext_energy_grid = egrid.reshape(len(atm.teffs), len(ebvs), len(rvs), 1)
+                ext_photon_grid = pgrid.reshape(len(atm.teffs), len(ebvs), len(rvs), 1)
+                self.ndp[atm.name].register('ext@energy', (ebvs, rvs), ext_energy_grid)
+                self.ndp[atm.name].register('ext@photon', (ebvs, rvs), ext_photon_grid)
 
             if f'{atm.name}:Inorm' not in self.content:
                 self.content.append(f'{atm.name}:Inorm')
@@ -845,8 +844,8 @@ class Passband:
                 ppbints = pbints_photon[-1].reshape(-1, 1)
                 pgrid = np.trapz(ppbints[:, :, None, None] * Alam[:, None, :, :], wls, axis=0) / np.trapz(ppbints[:, :, None, None], wls, axis=0)
 
-                ext_energy_grid[tuple(atm.indices[i])] = egrid.reshape(len(atm.ebvs), len(atm.rvs), 1)
-                ext_photon_grid[tuple(atm.indices[i])] = pgrid.reshape(len(atm.ebvs), len(atm.rvs), 1)
+                ext_energy_grid[tuple(atm.indices[i])] = egrid.reshape(len(ebvs), len(rvs), 1)
+                ext_photon_grid[tuple(atm.indices[i])] = pgrid.reshape(len(ebvs), len(rvs), 1)
 
         self.ndp[atm.name].register('inorm@photon', None, atm_photon_grid[..., -1, :])
         self.ndp[atm.name].register('inorm@energy', None, atm_energy_grid[..., -1, :])
@@ -859,8 +858,8 @@ class Passband:
             self.content.append(f'{atm.name}:Imu')
 
         if include_extinction:
-            self.ndp[atm.name].register('ext@photon', (atm.ebvs, atm.rvs), ext_photon_grid)
-            self.ndp[atm.name].register('ext@energy', (atm.ebvs, atm.rvs), ext_energy_grid)
+            self.ndp[atm.name].register('ext@photon', (ebvs, rvs), ext_photon_grid)
+            self.ndp[atm.name].register('ext@energy', (ebvs, rvs), ext_energy_grid)
             if f'{atm.name}:ext' not in self.content:
                 self.content.append(f'{atm.name}:ext')
 

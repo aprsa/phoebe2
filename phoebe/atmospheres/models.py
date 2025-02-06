@@ -208,7 +208,7 @@ class ModelAtmosphere:
         * an array of intensities with the limb treatment applied.
         """
 
-        intensities[0] = intensities[1] + (intensities[2]-intensities[1])/(self.mus[2]-self.mus[1])*(self.mus[0]-self.mus[1])
+        intensities[0] = max(1e-12, intensities[1] + (intensities[2]-intensities[1])/(self.mus[2]-self.mus[1])*(self.mus[0]-self.mus[1]))
         return intensities
 
 
@@ -272,7 +272,7 @@ class CK2004ModelAtmosphere(ModelAtmosphere):
     units = 1e7  # erg/s/cm^2/A -> W/m^3
 
     def __init__(self, *args, **kwargs):
-        super().__init__(atm=self.name, *args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def parse_rules(self, relative_filename):
         return [
@@ -304,7 +304,7 @@ class PhoenixModelAtmosphere(ModelAtmosphere):
     units = 1  # W/m^3
 
     def __init__(self, *args, **kwargs):
-        super().__init__(self.name, *args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def parse_rules(self, relative_filename):
         return [
