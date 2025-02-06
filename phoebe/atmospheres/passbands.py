@@ -485,7 +485,7 @@ class Passband:
                 log10ints = np.log10(self.ndp['blackbody'].table['inorm@photon'][1])
                 bb_func_photon = interpolate.splrep(teffs, log10ints, s=0)
 
-                bb_func = Table({'teff': self._bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
+                bb_func = Table({'teff': bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
                 data.append(fits.table_to_hdu(bb_func))
 
         # All saved content has been syndicated to the content list:
