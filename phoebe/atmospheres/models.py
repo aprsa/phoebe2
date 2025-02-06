@@ -112,7 +112,7 @@ class ModelAtmosphere:
         _atmtable.append(self.__class__)
 
     @classmethod
-    def from_path(cls, path):
+    def from_path(cls, path, wls_file=None):
         """
         Instantiates the class and all attributes from a given path.
 
@@ -128,9 +128,8 @@ class ModelAtmosphere:
         self = cls(from_path=True)
         self.path = path
 
-        #Check for wavelength file a la TMAP/Tremblay
-        if os.path.isfile(os.path.join(path,"wavelengths.npy")):
-            self.wls= np.load(os.path.join(path,"wavelengths.npy")) 
+        if wls_file is not None:
+            self.wls= np.load(os.path.join(path,wls_file)) 
 
         try:
             self.models = glob.glob(os.path.join(path, '*fits'))
