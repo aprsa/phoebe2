@@ -424,7 +424,7 @@ class Passband:
 
         # axes:
         for atm in models._atmtable:
-            if f'{atm.name}:Inorm' in self.content:
+            if f'{atm.name}:Inorm' in self.content and f'{atm.name}:Imu' not in self.content:
                 basic_axes = self.ndp[atm.name].axes
 
                 for name, axis in zip(atm.basic_axis_names, basic_axes):
@@ -438,10 +438,9 @@ class Passband:
                     data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
             if f'{atm.name}:ext' in self.content:
-                basic_axes = self.ndp[atm.name].axes
                 associated_axes = self.ndp[atm.name].table['ext@photon'][0]
 
-                for name, axis in zip(atm.basic_axis_names + ['ebvs', 'rvs'], basic_axes + associated_axes):
+                for name, axis in zip(['ebvs', 'rvs'], associated_axes):
                     data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
         # grids:
@@ -611,13 +610,13 @@ class Passband:
                         self.ndp[atm.name].register('ldint@photon', None, hdul[f'{atm.prefix}iegrid'].data)
                         self.ndp[atm.name].register('ldint@energy', None, hdul[f'{atm.prefix}ipgrid'].data)
 
-                    if f'{atm}:ext' in self.content:
+                    if f'{atm.name}:ext' in self.content:
                         # associated axes:
                         ebvs = np.array(list(hdul[f'{atm.prefix}_ebvs'].data['ebvs']))
                         rvs = np.array(list(hdul[f'{atm.prefix}_rvs'].data['rvs']))
 
-                        self.ndp[atm].register('ext@photon', (ebvs, rvs), hdul[f'{atm.prefix}XEGRID'].data)
-                        self.ndp[atm].register('ext@energy', (ebvs, rvs), hdul[f'{atm.prefix}XPGRID'].data)
+                        self.ndp[atm.name].register('ext@photon', (ebvs, rvs), hdul[f'{atm.prefix}XEGRID'].data)
+                        self.ndp[atm.name].register('ext@energy', (ebvs, rvs), hdul[f'{atm.prefix}XPGRID'].data)
 
         return self
 
@@ -808,6 +807,8 @@ class Passband:
                 ext_photon_grid = pgrid.reshape(len(atm.teffs), len(ebvs), len(rvs), 1)
                 self.ndp[atm.name].register('ext@energy', (ebvs, rvs), ext_energy_grid)
                 self.ndp[atm.name].register('ext@photon', (ebvs, rvs), ext_photon_grid)
+                if f'{atm.name}:ext' not in self.content:
+                    self.content.append(f'{atm.name}:ext')
 
             if f'{atm.name}:Inorm' not in self.content:
                 self.content.append(f'{atm.name}:Inorm')
