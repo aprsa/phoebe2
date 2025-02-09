@@ -542,7 +542,6 @@ class Passband:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy'][1], name=f'{atm.prefix.upper()}XEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon'][1], name=f'{atm.prefix.upper()}XPGRID'))
                 content.append(f'{atm.name}:ext')
-
         # All saved content has been syndicated to the content list:
         primary_hdu.header['CONTENT'] = str(content)
 
@@ -613,8 +612,8 @@ class Passband:
                         bb_teffs = Table({'teffs': hdul['bb_func'].data['teff']}, meta={'extname': 'bb_teffs'})
                         self.compute_intensities(atm=models.BlackbodyModelAtmosphere(), include_mus=False, include_ld=False, include_extinction=False, verbose=False)
                         hdul.append(fits.table_to_hdu(bb_teffs))
-                        hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@energy'][1], name='bbnegrid'))
-                        hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@photon'][1], name='bbnpgrid'))
+                        hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@energy']['grid'], name='bbnegrid'))
+                        hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@photon']['grid'], name='bbnpgrid'))
 
                     stored_atms = set([content.split(':')[0] for content in self.content])
                     if 'ck2004' in stored_atms:
