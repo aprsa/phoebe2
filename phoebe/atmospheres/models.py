@@ -69,6 +69,7 @@ class ModelAtmosphere:
 
     name = None
     prefix = None
+    external = False
 
     # default axes:
     basic_axis_names = ['teffs', 'loggs', 'abuns']
@@ -215,6 +216,24 @@ class ModelAtmosphere:
         return intensities
 
 
+class WDBlackbodyModelAtmosphere(ModelAtmosphere):
+    """
+    Wilson-Devinney blackbody model atmosphere.
+    """
+
+    name = 'extern_planckint'
+    external = True
+
+
+class WDKurucz93ModelAtmosphere(ModelAtmosphere):
+    """
+    Wilson-Devinney Kurucz 1993 model atmosphere.
+    """
+
+    name = 'extern_atmx'
+    external = True
+
+
 class BlackbodyModelAtmosphere(ModelAtmosphere):
     """
     Blackbody model atmosphere.
@@ -231,7 +250,7 @@ class BlackbodyModelAtmosphere(ModelAtmosphere):
     teffs = 10**np.linspace(2.5, 5.7, 97)  # this corresponds to the 316K-501187K range.
 
     def __init__(self, *args, **kwargs):
-        super().__init__('blackbody', *args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def limb_treatment(self, intensities):
         return intensities
@@ -346,6 +365,7 @@ class TremblayModelAtmosphere(ModelAtmosphere):
             float(pars[2])/100  # logg
         ]
 
+
 class TMAPDOModelAtmosphere(ModelAtmosphere):
     """
     TMAP model atmosphere.
@@ -373,10 +393,11 @@ class TMAPDOModelAtmosphere(ModelAtmosphere):
     def parse_rules(self, relative_filename):
         pars = re.split('[TGA.]+', relative_filename)
         return [
-            float(pars[1]),  # teff
+            float(pars[1]),     # teff
             float(pars[2])/100  # logg
         ]
-    
+
+
 class TMAPDAModelAtmosphere(ModelAtmosphere):
     """
     TMAP model atmosphere.
@@ -404,14 +425,14 @@ class TMAPDAModelAtmosphere(ModelAtmosphere):
     def parse_rules(self, relative_filename):
         pars = re.split('[TGA.]+', relative_filename)
         return [
-            float(pars[1]),  # teff
+            float(pars[1]),     # teff
             float(pars[2])/100  # logg
         ]
 
 
 class TMAPsdOModelAtmosphere(ModelAtmosphere):
     name = 'tmap_sdO'
-    prefix='ts'
+    prefix = 'ts'
     basic_axis_names = ['teffs', 'loggs', 'abuns']
 
     mus = np.array([0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 
@@ -429,14 +450,15 @@ class TMAPsdOModelAtmosphere(ModelAtmosphere):
     def parse_rules(self, relative_filename):
         pars = re.split('[TGA.]+', relative_filename)
         return [
-            float(pars[1]),  # teff
+            float(pars[1]),      # teff
             float(pars[2])/100,  # logg
-            float(pars[3])/100 #abun
+            float(pars[3])/100   # abun
         ]
+
 
 class TMAPDAOModelAtmosphere(ModelAtmosphere):
     name = 'tmap_DAO'
-    prefix='tm'
+    prefix = 'tm'
     basic_axis_names = ['teffs', 'loggs', 'abuns']
 
     mus = np.array([0., 0.00136799, 0.00719419, 0.01761889, 0.03254691, 
@@ -454,10 +476,11 @@ class TMAPDAOModelAtmosphere(ModelAtmosphere):
     def parse_rules(self, relative_filename):
         pars = re.split('[TGA.]+', relative_filename)
         return [
-            float(pars[1]),  # teff
+            float(pars[1]),      # teff
             float(pars[2])/100,  # logg
-            float(pars[3])/100 #abun
+            float(pars[3])/100   # abun
         ]
+
 
 # global model atmosphere table:
 _atmtable = ModelAtmosphere.__subclasses__()
@@ -479,4 +502,5 @@ def atm_from_name(name):
     for atm in _atmtable:
         if atm.name == name:
             return atm
-    return None
+
+    raise ValueError(f'Atmosphere named "{name}" not found.')

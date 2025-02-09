@@ -359,7 +359,7 @@ class Passband:
 
         self.add_to_history(f'passband transmission function updated.')
 
-    def save(self, archive, overwrite=True, update_timestamp=True, export_inorm_tables=False, export_legacy_bb=False, export_legacy_comments=True):
+    def save(self, archive, overwrite=True, update_timestamp=True, export_to_pre25=False):
         """
         Saves the passband file in the fits format.
 
@@ -370,20 +370,21 @@ class Passband:
             existing file with the same filename as provided in `archive`
         * `update_timestamp` (bool, optional, default=True): whether to update
             the stored timestamp with the current time.
-        * `export_inorm_tables` (bool, optional, default=False): Inorm tables
-            have been deprecated since phoebe 2.4; for backwards compatibility
-            we still may need to export them to fits files so that pre-2.4
-            versions can use the same passband files.
-        * `export_legacy_comments` (bool, optional, default=True): whether to
-            export the dummy COMMENTS card (used in old passbands) in addition
-            to the new COMMENT card.
+        * `export_to_pre25` (bool, optional, default=False): whether to export
+            the passband file to a pre-2.5 format. This includes renaming the
+            columns in the tables to match the old passband files, exporting
+            Inorm tables for model atmospheres, exporting blackbody functions
+            and exporting legacy comments.
         """
 
         # Timestamp is used for passband versioning.
         timestamp = time.ctime() if update_timestamp else self.timestamp
 
         header = fits.Header()
-        header['PHOEBEVN'] = phoebe_version
+        if export_to_pre25:
+            header['PHOEBEVN'] = '2.4.17'
+        else:
+            header['PHOEBEVN'] = phoebe_version
         header['TIMESTMP'] = timestamp
         header['PBSET'] = self.pbset
         header['PBNAME'] = self.pbname
@@ -396,7 +397,7 @@ class Passband:
         header['PTFEAREA'] = self.ptf_area
         header['PTFPAREA'] = self.ptf_photon_area
 
-        if export_legacy_comments:
+        if export_to_pre25:
             header['COMMENTS'] = ''
 
         # We build content from scratch to avoid any potential issues with unsupported tables:
@@ -428,26 +429,46 @@ class Passband:
                 basic_axes = self.ndp[atm.name].axes
 
                 for name, axis in zip(atm.basic_axis_names, basic_axes):
-                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    if export_to_pre25:
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    else:
+                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
             if f'{atm.name}:Imu' in self.content:
                 basic_axes = self.ndp[atm.name].axes
                 associated_axes = self.ndp[atm.name].table['imu@photon']['associated_axes']
 
                 for name, axis in zip(atm.basic_axis_names + ['mus'], basic_axes + associated_axes):
-                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    if export_to_pre25:
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    else:
+                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
             if f'{atm.name}:ext' in self.content:
                 associated_axes = self.ndp[atm.name].table['ext@photon']['associated_axes']
 
                 for name, axis in zip(['ebvs', 'rvs'], associated_axes):
-                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    if export_to_pre25:
+                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    else:
+                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
         # grids:
         for atm in models._atmtable:
             if f'{atm.name}:Inorm' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy']['grid'], name=f'{atm.prefix.upper()}NEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon']['grid'], name=f'{atm.prefix.upper()}NPGRID'))
+                if export_to_pre25 and atm.name == 'blackbody':
+                    teffs = self.ndp['blackbody'].axes[0]
+                    log10ints = self.ndp['blackbody'].table['inorm@energy']['grid']
+                    bb_func_energy = interpolate.splrep(teffs, log10ints, s=0)
+                    log10ints = self.ndp['blackbody'].table['inorm@photon']['grid']
+                    bb_func_photon = interpolate.splrep(teffs, log10ints, s=0)
+
+                    bb_func = Table({'teff': bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
+                    data.append(fits.table_to_hdu(bb_func))
+                else:
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy']['grid'], name=f'{atm.prefix.upper()}NEGRID'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon']['grid'], name=f'{atm.prefix.upper()}NPGRID'))
+
                 content.append(f'{atm.name}:Inorm')
 
             if f'{atm.name}:Imu' in self.content:
@@ -455,7 +476,7 @@ class Passband:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon']['grid'], name=f'{atm.prefix.upper()}FPGRID'))
                 content.append(f'{atm.name}:Imu')
 
-                if export_inorm_tables and f'{atm.name}:Inorm' not in content:
+                if export_to_pre25 and f'{atm.name}:Inorm' not in content:
                     data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy']['grid'][..., -1, :], name=f'{atm.prefix.upper()}NEGRID'))
                     data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon']['grid'][..., -1, :], name=f'{atm.prefix.upper()}NPGRID'))
                     content.append(f'{atm.name}:Inorm')
@@ -471,21 +492,13 @@ class Passband:
                 content.append(f'{atm.name}:ldint')
 
             if f'{atm.name}:ext' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy']['grid'], name=f'{atm.prefix.upper()}XEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon']['grid'], name=f'{atm.prefix.upper()}XPGRID'))
+                if export_to_pre25 and atm.name == 'blackbody':
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy']['grid'], name=f'{atm.prefix.upper()}EGRID'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon']['grid'], name=f'{atm.prefix.upper()}PGRID'))
+                else:
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy']['grid'], name=f'{atm.prefix.upper()}XEGRID'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon']['grid'], name=f'{atm.prefix.upper()}XPGRID'))
                 content.append(f'{atm.name}:ext')
-
-        # If legacy blackbody functions are requested, export them:
-        if export_legacy_bb:
-            if 'blackbody:Inorm' in self.content:
-                teffs = self.ndp['blackbody'].axes[0]
-                log10ints = np.log10(self.ndp['blackbody'].table['inorm@energy']['grid'])
-                bb_func_energy = interpolate.splrep(teffs, log10ints, s=0)
-                log10ints = np.log10(self.ndp['blackbody'].table['inorm@photon']['grid'])
-                bb_func_photon = interpolate.splrep(teffs, log10ints, s=0)
-
-                bb_func = Table({'teff': bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
-                data.append(fits.table_to_hdu(bb_func))
 
         # All saved content has been syndicated to the content list:
         primary_hdu.header['CONTENT'] = str(content)
@@ -549,7 +562,6 @@ class Passband:
 
             if load_content:
                 if parse(self.phoebe_version) < parse('2.5.0.alpha'):
-                    print(f'{self.phoebe_version=}')
                     if 'blackbody:Inorm' in self.content:
                         # phoebe 2.5 passbands store BB_TEFFS axis, but pre-2.5 versions
                         # stored BB_FUNC instead, so if we are importing an old passband,
@@ -579,6 +591,8 @@ class Passband:
                     self.extern_wd_idx = header['wd_idx']
 
                 for atm in models._atmtable:
+                    if atm.external:
+                        continue
                     if f'{atm.name}:Inorm' in self.content:
                         basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name.upper()}'].data[name])) for name in atm.basic_axis_names])
                         self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
@@ -1009,7 +1023,7 @@ class Passband:
         """
 
         if wdidx < 1 or wdidx > Npb:
-            raise ValueError('wdidx value out of bounds: 1 <= wdidx <= Npb')
+            raise ValueError(f'wdidx value out of bounds: 1 <= wdidx <= {Npb}')
 
         # Store the passband index for use in planckint() and atmx():
         self.extern_wd_idx = wdidx
@@ -1185,7 +1199,7 @@ class Passband:
 
             intensities = ndpolants['interps'] / ldint
 
-        elif atm == 'extern_planckint' and 'extern_planckint:Inorm' in self.content:
+        elif atm.name == 'extern_planckint' and 'extern_planckint:Inorm' in self.content:
             if intens_weighting == 'photon':
                 raise ValueError(f'the combination of atm={atm} and intens_weighting={intens_weighting} is not supported.')
             # TODO: add all other exceptions
@@ -1197,7 +1211,7 @@ class Passband:
             # print(f'{intensities.shape=} {ldint.shape=} {intensities[:5]=} {ldint[:5]=}')
             intensities /= ldint
 
-        elif atm == 'extern_atmx' and 'extern_atmx:Inorm' in self.content:
+        elif atm.name == 'extern_atmx' and 'extern_atmx:Inorm' in self.content:
             if intens_weighting == 'photon':
                 raise ValueError(f'the combination of atm={atm} and intens_weighting={intens_weighting} is not supported.')
             # TODO: add all other exceptions
@@ -1358,11 +1372,11 @@ class Passband:
         """
 
         # LIKELY OBSOLETE:
-        if atm.name not in ['blackbody', 'extern_planckint', 'extern_atmx', 'ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
-            raise RuntimeError(f'atm={atm.name} is not supported.')
+        # if atm.name not in ['blackbody', 'extern_planckint', 'extern_atmx', 'ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
+        #     raise RuntimeError(f'atm={atm.name} is not supported.')
 
-        if ldatm.name not in ['none', 'ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
-            raise ValueError(f'ldatm={ldatm.name} is not supported.')
+        # if ldatm.name not in ['none', 'ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
+        #     raise ValueError(f'ldatm={ldatm.name} is not supported.')
 
         if ld_func == 'interp':
             if atm.name == 'blackbody' and 'blackbody:Inorm' in self.content and ldatm.name in ['ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
@@ -1473,7 +1487,7 @@ class Passband:
                 blending_method=blending_method
             )
 
-            ld = self._ld(ld_func=ld_func, mu=mus, ld_coeffs=ld_coeffs).reshape(-1, 1)
+            ld = self.ld_func(ld_func=ld_func, mu=mus, ld_coeffs=ld_coeffs).reshape(-1, 1)
 
             return ints['inorms'] * ld
 

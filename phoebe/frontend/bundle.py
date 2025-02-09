@@ -10263,15 +10263,10 @@ class Bundle(ParameterSet):
                     passband = self.get_value(qualifier='passband', dataset=ldcs_param.dataset, context='dataset', **_skip_filter_checks)
 
                 atm = self.get_value(qualifier='atm', compute=compute, component=ldcs_param.component, default='ck2004', atm=kwargs.get('atm', None), **_skip_filter_checks)
-                atm_model = models.atm_from_name(atm)
-
                 if ldcs == 'auto':
-                    if atm in ['extern_atmx', 'extern_planckint', 'blackbody']:
-                        ldcs = models.CK2004ModelAtmosphere
-                    else:
-                        ldcs = atm_model
+                    ldcs = atm
 
-                pb = get_passband(passband, content='{}:ld'.format(ldcs.name))
+                pb = get_passband(passband, content=f'{ldcs}:ld')
                 teff = self.get_value(qualifier='teff', component=ldcs_param.component, context='component', unit='K', **_skip_filter_checks)
                 logg = self.get_value(qualifier='logg', component=ldcs_param.component, context='component', **_skip_filter_checks)
                 abun = self.get_value(qualifier='abun', component=ldcs_param.component, context='component', **_skip_filter_checks)
@@ -10294,7 +10289,7 @@ class Bundle(ParameterSet):
                 # the first element of the array.
                 ld_coeffs = pb.interpolate_ldcoeffs(
                     query_pts=query_pts,
-                    ldatm=ldcs,
+                    ldatm=models.atm_from_name(ldcs),
                     ld_func=ld_func,
                     intens_weighting=intens_weighting,
                     ld_extrapolation_method=ld_extrapolation_method
