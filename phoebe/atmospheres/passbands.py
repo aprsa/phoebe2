@@ -432,13 +432,13 @@ class Passband:
 
             if f'{atm.name}:Imu' in self.content:
                 basic_axes = self.ndp[atm.name].axes
-                associated_axes = self.ndp[atm.name].table['imu@photon'][0]
+                associated_axes = self.ndp[atm.name].table['imu@photon']['associated_axes']
 
                 for name, axis in zip(atm.basic_axis_names + ['mus'], basic_axes + associated_axes):
                     data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
             if f'{atm.name}:ext' in self.content:
-                associated_axes = self.ndp[atm.name].table['ext@photon'][0]
+                associated_axes = self.ndp[atm.name].table['ext@photon']['associated_axes']
 
                 for name, axis in zip(['ebvs', 'rvs'], associated_axes):
                     data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
@@ -446,42 +446,42 @@ class Passband:
         # grids:
         for atm in models._atmtable:
             if f'{atm.name}:Inorm' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy'][1], name=f'{atm.prefix.upper()}NEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon'][1], name=f'{atm.prefix.upper()}NPGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy']['grid'], name=f'{atm.prefix.upper()}NEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon']['grid'], name=f'{atm.prefix.upper()}NPGRID'))
                 content.append(f'{atm.name}:Inorm')
 
             if f'{atm.name}:Imu' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy'][1], name=f'{atm.prefix.upper()}FEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon'][1], name=f'{atm.prefix.upper()}FPGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy']['grid'], name=f'{atm.prefix.upper()}FEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon']['grid'], name=f'{atm.prefix.upper()}FPGRID'))
                 content.append(f'{atm.name}:Imu')
 
                 if export_inorm_tables and f'{atm.name}:Inorm' not in content:
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy'][1][..., -1, :], name=f'{atm.prefix.upper()}NEGRID'))
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon'][1][..., -1, :], name=f'{atm.prefix.upper()}NPGRID'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy']['grid'][..., -1, :], name=f'{atm.prefix.upper()}NEGRID'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon']['grid'][..., -1, :], name=f'{atm.prefix.upper()}NPGRID'))
                     content.append(f'{atm.name}:Inorm')
 
             if f'{atm.name}:ld' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@energy'][1], name=f'{atm.prefix.upper()}LEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@photon'][1], name=f'{atm.prefix.upper()}LPGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@energy']['grid'], name=f'{atm.prefix.upper()}LEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@photon']['grid'], name=f'{atm.prefix.upper()}LPGRID'))
                 content.append(f'{atm.name}:ld')
 
             if f'{atm.name}:ldint' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['ldint@energy'][1], name=f'{atm.prefix.upper()}IEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['ldint@photon'][1], name=f'{atm.prefix.upper()}IPGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ldint@energy']['grid'], name=f'{atm.prefix.upper()}IEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ldint@photon']['grid'], name=f'{atm.prefix.upper()}IPGRID'))
                 content.append(f'{atm.name}:ldint')
 
             if f'{atm.name}:ext' in self.content:
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy'][1], name=f'{atm.prefix.upper()}XEGRID'))
-                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon'][1], name=f'{atm.prefix.upper()}XPGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy']['grid'], name=f'{atm.prefix.upper()}XEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon']['grid'], name=f'{atm.prefix.upper()}XPGRID'))
                 content.append(f'{atm.name}:ext')
 
         # If legacy blackbody functions are requested, export them:
         if export_legacy_bb:
             if 'blackbody:Inorm' in self.content:
                 teffs = self.ndp['blackbody'].axes[0]
-                log10ints = np.log10(self.ndp['blackbody'].table['inorm@energy'][1])
+                log10ints = np.log10(self.ndp['blackbody'].table['inorm@energy']['grid'])
                 bb_func_energy = interpolate.splrep(teffs, log10ints, s=0)
-                log10ints = np.log10(self.ndp['blackbody'].table['inorm@photon'][1])
+                log10ints = np.log10(self.ndp['blackbody'].table['inorm@photon']['grid'])
                 bb_func_photon = interpolate.splrep(teffs, log10ints, s=0)
 
                 bb_func = Table({'teff': bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
@@ -557,8 +557,8 @@ class Passband:
                         bb_teffs = Table({'teffs': hdul['bb_func'].data['teff']}, meta={'extname': 'bb_teffs'})
                         self.compute_intensities(atm=models.BlackbodyModelAtmosphere(), include_mus=False, include_ld=False, include_extinction=False, verbose=False)
                         hdul.append(fits.table_to_hdu(bb_teffs))
-                        hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@energy'][1], name='bbnegrid'))
-                        hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@photon'][1], name='bbnpgrid'))
+                        hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@energy']['grid'], name='bbnegrid'))
+                        hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@photon']['grid'], name='bbnpgrid'))
 
                     stored_atms = set([content.split(':')[0] for content in self.content])
                     if 'ck2004' in stored_atms:
