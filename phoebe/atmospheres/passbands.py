@@ -425,6 +425,9 @@ class Passband:
 
         # axes:
         for atm in models._atmtable:
+            if atm.external:
+                continue
+
             if f'{atm.name}:Inorm' in self.content and f'{atm.name}:Imu' not in self.content:
                 basic_axes = self.ndp[atm.name].axes
 
@@ -455,6 +458,9 @@ class Passband:
 
         # grids:
         for atm in models._atmtable:
+            if atm.external:
+                continue
+
             if f'{atm.name}:Inorm' in self.content:
                 if export_to_pre25 and atm.name == 'blackbody':
                     teffs = self.ndp['blackbody'].axes[0]
