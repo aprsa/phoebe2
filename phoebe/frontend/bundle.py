@@ -10264,7 +10264,10 @@ class Bundle(ParameterSet):
 
                 atm = self.get_value(qualifier='atm', compute=compute, component=ldcs_param.component, default='ck2004', atm=kwargs.get('atm', None), **_skip_filter_checks)
                 if ldcs == 'auto':
-                    ldcs = atm
+                    # in case we have blackbody or extern atmospheres, we default to
+                    # ck2004, otherwise we match the original atm:
+                    atm_class = models.atm_from_name(atm)
+                    ldcs = 'ck2004' if atm_class.external or not hasattr(atm_class, 'mus') else atm
 
                 pb = get_passband(passband, content=f'{ldcs}:ld')
                 teff = self.get_value(qualifier='teff', component=ldcs_param.component, context='component', unit='K', **_skip_filter_checks)
