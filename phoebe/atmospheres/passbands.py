@@ -43,20 +43,6 @@ _url_tables_server = 'http://tables.phoebe-project.org'
 # comment out the following line if testing tables.phoebe-project.org server locally:
 # _url_tables_server = 'http://localhost:5555'
 
-# Future atmosphere tables could exist in the passband files, but the current
-# release won't be able to handle those.
-atm_tables = {
-    'ck2004': 'CK',
-    'phoenix': 'PH',
-    'tmap_sdO': 'TS',
-    'tmap_DA': 'TA',
-    'tmap_DAO': 'TM',
-    'tmap_DO': 'TO',
-    'tremblay': 'TR'
-}
-
-supported_atms = list(atm_tables.keys()) + ['blackbody', 'extern_atmx', 'extern_planckint']
-
 # Global passband table. This dict should never be tinkered with outside
 # of the functions in this module; it might be nice to make it read-only
 # at some point.
