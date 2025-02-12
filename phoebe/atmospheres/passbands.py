@@ -555,12 +555,19 @@ class Passband:
             if load_content:
                 if parse(self.phoebe_version) < parse('2.5.0.alpha'):
                     if 'blackbody:Inorm' in self.content:
-                        # phoebe 2.5 passbands store BB_TEFFS axis, but pre-2.5 versions
-                        # stored BB_FUNC instead, so if we are importing an old passband,
-                        # we need to recompute BB tables:
-                        bb_teffs = Table({'teffs': hdul['bb_func'].data['teff']}, meta={'extname': 'bb_teffs'})
+                        # 2.4.17 passbands already include bb_teffs; older versions do not.
+                        if 'bb_teffs' not in hdul:
+                            bb_teffs = Table({'teffs': hdul['bb_func'].data['teff']}, meta={'extname': 'bb_teffs'})
+                            hdul.append(fits.table_to_hdu(bb_teffs))
+
                         self.compute_intensities(atm=models.BlackbodyModelAtmosphere(), include_mus=False, include_ld=False, include_extinction=False, verbose=False)
-                        hdul.append(fits.table_to_hdu(bb_teffs))
+                        hdul['bb_teffs'].data.columns.change_name('teff', 'teffs')
+                        if 'blackbody:ext' in self.content:
+                            hdul['bb_ebvs'].data.columns.change_name('ebv', 'ebvs')
+                            hdul['bb_rvs'].data.columns.change_name('rv', 'rvs')
+                            hdul['BBEGRID'].header['EXTNAME'] = 'bbxegrid'
+                            hdul['BBPGRID'].header['EXTNAME'] = 'bbxpgrid'
+
                         hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@energy']['grid'], name='bbnegrid'))
                         hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@photon']['grid'], name='bbnpgrid'))
 
@@ -569,10 +576,19 @@ class Passband:
                         hdul['ck_teffs'].data.columns.change_name('teff', 'teffs')
                         hdul['ck_loggs'].data.columns.change_name('logg', 'loggs')
                         hdul['ck_abuns'].data.columns.change_name('abun', 'abuns')
+                        
+                        if 'ck2004:ext' in self.content:
+                            hdul['ck_ebvs'].data.columns.change_name('ebv', 'ebvs')
+                            hdul['ck_rvs'].data.columns.change_name('rv', 'rvs')
+
                     if 'phoenix' in stored_atms:
                         hdul['ph_teffs'].data.columns.change_name('teff', 'teffs')
                         hdul['ph_loggs'].data.columns.change_name('logg', 'loggs')
                         hdul['ph_abuns'].data.columns.change_name('abun', 'abuns')
+
+                        if 'phoenix:ext' in self.content:
+                            hdul['ph_ebvs'].data.columns.change_name('ebv', 'ebvs')
+                            hdul['ph_rvs'].data.columns.change_name('rv', 'rvs')
 
                 if 'extern_planckint:Inorm' in self.content or 'extern_atmx:Inorm' in self.content:
                     atmdir = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tables/wd'))
@@ -585,6 +601,7 @@ class Passband:
                 for atm in models._atmtable:
                     if atm.external:
                         continue
+
                     if f'{atm.name}:Inorm' in self.content:
                         basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name.upper()}'].data[name])) for name in atm.basic_axis_names])
                         self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
