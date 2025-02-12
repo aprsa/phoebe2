@@ -1799,34 +1799,36 @@ class Star(Body):
         boosting_method = kwargs.get('boosting_method', self.boosting_method.get(dataset, None))
         bindex = kwargs.get('boosting_index', self.boosting_index.get(dataset, None)) if boosting_method == 'manual' else None
 
+        atm_model = models.atm_from_name(atm)
+
         if ld_mode == 'interp':
             # calls to pb.Imu need to pass on ld_func='interp'
             # NOTE: we'll do another check when calling pb.Imu, but we'll also
             # change the value here for the debug logger
             ld_func = 'interp'
-            ldatm = models.atm_from_name(atm)
+            ldatm_model = atm_model
         elif ld_mode == 'lookup':
             if ld_coeffs_source == 'auto':
-                ldatm = models.CK2004ModelAtmosphere if atm in ['blackbody', 'extern_atmx', 'extern_planckint'] else models.atm_from_name(atm)
+                # default to ck2004 for external and blackbody atmospheres, and
+                # use the same model atmosphere for all other atmospheres:
+                ldatm_model = models.CK2004ModelAtmosphere if atm_model.external or not hasattr(atm_model, 'mus') else atm_model
             else:
-                ldatm = models.atm_from_name(ld_coeffs_source)
+                ldatm_model = models.atm_from_name(ld_coeffs_source)
         elif ld_mode == 'manual':
-            ldatm = None
+            ldatm_model = None
         else:
             raise NotImplementedError
 
-        logger.debug("ld_func={}, ld_coeffs={}, atm={}, ldatm={}".format(ld_func, ld_coeffs, atm, ldatm))
-
-        pblum = kwargs.get('pblum', 4*np.pi)
+        logger.debug(f'{ld_func=}, {ld_coeffs=}, {atm_model=}, {ldatm_model=}')
 
         if lc_method == 'numerical':
             pb = passbands.get_passband(passband)
 
-            if ldatm is not None and f'{ldatm.name}:ldint' not in pb.content:
+            if ldatm_model is not None and f'{ldatm_model.name}:ldint' not in pb.content:
                 if ld_mode == 'lookup':
-                    raise ValueError(f'{ldatm.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the ld_coeffs_source parameter')
+                    raise ValueError(f'{ldatm_model.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the ld_coeffs_source parameter')
                 else:
-                    raise ValueError(f'{ldatm.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the atm parameter')
+                    raise ValueError(f'{ldatm_model.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the atm parameter')
 
             if intens_weighting == 'photon':
                 ptfarea = pb.ptf_photon_area/pb.h/pb.c
@@ -1835,17 +1837,28 @@ class Star(Body):
 
             self.set_ptfarea(dataset, ptfarea)
 
+            # figure out what columns need to be packed into query_pts:
+            columns = atm_model.basic_axis_names
+            if ldatm_model is not None:
+                # add any new ldatm columns:
+                # note: can't use set() because the order is arbitrary
+                columns += [column for column in ldatm_model.basic_axis_names if column not in columns]
+
+            query_pts = np.stack((
+                [getattr(self.mesh, column).for_computations for column in columns]
+            )).T
+
             # Inorm/Imu are smart enough to extract teffs for atm='blackbody'
             # so we don't need to worry about that here.
-            query_pts = np.stack((
-                self.mesh.teffs.for_computations,
-                self.mesh.loggs.for_computations,
-                self.mesh.abuns.for_computations
-            )).T
+            # query_pts = np.stack((
+            #     self.mesh.teffs.for_computations,
+            #     self.mesh.loggs.for_computations,
+            #     self.mesh.abuns.for_computations
+            # )).T
 
             ldint = pb.ldint(
                 query_pts=query_pts,
-                ldatm=ldatm,
+                ldatm=ldatm_model,
                 ld_func=ld_func if ld_mode != 'interp' else ld_mode,
                 ld_coeffs=ld_coeffs,
                 intens_weighting=intens_weighting,
@@ -1855,8 +1868,8 @@ class Star(Body):
 
             abs_normal_intensities = pb.Inorm(
                 query_pts=query_pts,
-                atm=models.atm_from_name(atm),
-                ldatm=ldatm,
+                atm=atm_model,
+                ldatm=ldatm_model,
                 ldint=ldint,
                 ld_func=ld_func,
                 ld_coeffs=ld_coeffs,
@@ -1876,8 +1889,8 @@ class Star(Body):
 
             abs_intensities = pb.Imu(
                 query_pts=query_pts,
-                atm=models.atm_from_name(atm),
-                ldatm=ldatm,
+                atm=atm_model,
+                ldatm=ldatm_model,
                 ldint=ldint,
                 ld_func=ld_func if ld_mode != 'interp' else ld_mode,
                 ld_coeffs=ld_coeffs,
@@ -1905,10 +1918,11 @@ class Star(Body):
             if extinct == 0.0 or ignore_effects:
                 extinct_factors = 1.0
             else:
+                # TODO: fix this autrocity below:
                 query_pts = np.c_[query_pts[:,:-1], np.full_like(query_pts[:,0], fill_value=extinct), np.full_like(query_pts[:,0], fill_value=Rv)]
                 extinct_factors = pb.interpolate_extinct(
                     query_pts=query_pts,
-                    atm=models.atm_from_name(atm),
+                    atm=atm_model,
                     intens_weighting=intens_weighting,
                     extrapolation_method=atm_extrapolation_method
                 )
