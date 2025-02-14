@@ -1831,7 +1831,7 @@ class Star(Body):
                     raise ValueError(f'{ldatm_model.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the atm parameter')
 
             if intens_weighting == 'photon':
-                ptfarea = pb.ptf_photon_area/pb.h/pb.c
+                ptfarea = pb.ptf_photon_area/passbands.h/passbands.c
             else:
                 ptfarea = pb.ptf_area
 
