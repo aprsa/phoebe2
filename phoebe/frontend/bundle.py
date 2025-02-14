@@ -10803,7 +10803,7 @@ class Bundle(ParameterSet):
                     )
 
                     if intens_weighting=='photon':
-                        ptfarea = pb.ptf_photon_area/pb.h/pb.c
+                        ptfarea = pb.ptf_photon_area/passbands.h.value/passbands.c.value
                     else:
                         ptfarea = pb.ptf_area
 
