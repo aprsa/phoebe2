@@ -10485,6 +10485,7 @@ class Bundle(ParameterSet):
                 raise NotImplementedError("l3_mode='{}' not supported.".format(l3_mode))
 
         return l3s
+
     def compute_pblums(self, compute=None, model=None, pblum=True, pblum_abs=False,
                        pblum_scale=False, pbflux=False,
                        set_value=False, unit=None, **kwargs):
@@ -10776,8 +10777,8 @@ class Bundle(ParameterSet):
                         required_content += ['{}:ldint'.format(atms[component])]
                     pb = get_passband(passband, content=required_content)
 
-                    query_pts = np.ascontiguousarray( ((teffs[component], loggs[component], abuns[component]),) )
                     atm_model = models.atm_from_name(atms[component])
+                    query_pts = np.ascontiguousarray( ((teffs[component], loggs[component], abuns[component]),) )
 
                     abs_normal_intensities = pb.Inorm(
                         query_pts=query_pts,
@@ -10943,6 +10944,8 @@ class Bundle(ParameterSet):
             # this is an internal output used by run_compute, generally not requested by the user
             if system is not None:
                 system.reset(force_recompute_instantaneous=True)
+            
+            print(f'{pblums_abs=} {pblums_scale=} {pblums_rel=} {pbfluxes=}')
             return system, pblums_abs, pblums_scale, pblums_rel, pbfluxes
 
         # users will see the twig dictionaries with the exposed values based on

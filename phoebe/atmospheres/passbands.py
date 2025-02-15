@@ -977,10 +977,19 @@ class Passband:
             raise ValueError(f'ld_func={ld_func} is invalid; valid options are {s.keys()}.')
 
         if f'{ldatm.name}:ld' not in self.content:
-            raise ValueError(f'Limb darkening coefficients for ldatm={ldatm.name} are not available.')
+            raise ValueError(f'Limb darkening coefficients for {ldatm.name} atmosphere are not available.')
 
-        ld_coeffs = self.ndp[ldatm.name].ndpolate(f'ld@{intens_weighting}', query_pts, extrapolation_method=ld_extrapolation_method)['interps']
-        return ld_coeffs[s[ld_func]]
+        # if query_pts need to be reduced:
+        active_query_pts = query_pts
+        if len(ldatm.basic_axis_names) < query_pts.shape[0]:
+            active_query_pts = query_pts[:, :len(ldatm.basic_axis_names)]
+
+        ld_coeffs = self.ndp[ldatm.name].ndpolate(
+            f'ld@{intens_weighting}',
+            query_pts=active_query_pts,
+            extrapolation_method=ld_extrapolation_method)
+
+        return ld_coeffs['interps'][s[ld_func]]
 
     def interpolate_extinct(self, query_pts, atm=models.CK2004ModelAtmosphere, intens_weighting='photon', extrapolation_method='none'):
         """
@@ -1188,32 +1197,37 @@ class Passband:
         raise_on_nans = True if atm_extrapolation_method == 'none' else False
         blending_factors = None
 
+        # reduce query_pts if necessary for intensity computation:
+        active_query_pts = query_pts
+        if len(atm.basic_axis_names) != query_pts.shape[1]:
+            active_query_pts = np.ascontiguousarray(query_pts[:,:len(atm.basic_axis_names)])
+
         if atm.name == 'blackbody' and 'blackbody:Inorm' in self.content:
             # check if the required tables for the chosen ldatm are available:
-            # if ldatm == 'none' and ld_coeffs is None:
-            #     raise ValueError("ld_coeffs must be passed when ldatm='none'.")
-            # if ld_func == 'interp' and f'{ldatm}:Imu' not in self.content:
-            #     raise RuntimeError(f'passband {self.pbset}:{self.pbname} does not contain specific intensities for ldatm={ldatm}.')
-            # if ld_func != 'interp' and ld_coeffs is None and f'{ldatm}:ld' not in self.content:
-            #     raise RuntimeError(f'passband {self.pbset}:{self.pbname} does not contain limb darkening coefficients for ldatm={ldatm}.')
+            # if ldatm is None and ld_coeffs is None:
+            #     raise ValueError("ld_coeffs must be passed when ldatm=None.")
+            # if ld_func == 'interp' and f'{ldatm.name}:Imu' not in self.content:
+            #     raise RuntimeError(f'passband {self.pbset}:{self.pbname} does not contain specific intensities for {ldatm.name} atmosphere.')
+            # if ld_func != 'interp' and ld_coeffs is None and f'{ldatm.name}:ld' not in self.content:
+            #     raise RuntimeError(f'passband {self.pbset}:{self.pbname} does not contain limb darkening coefficients for {ldatm.name} atmosphere.')
             # if blending_method == 'blackbody':
-            #     raise ValueError(f'the combination of atm={atm} and blending_method={blending_method} is not valid.')
+            #     raise ValueError(f'the combination of {atm.name} atmosphere and blending_method={blending_method} is not valid.')
 
-            ndpolants = self.ndp[atm.name].ndpolate(f'inorm@{intens_weighting}', query_pts, extrapolation_method=atm_extrapolation_method)
+            ndpolants = self.ndp[atm.name].ndpolate(f'inorm@{intens_weighting}', query_pts=active_query_pts, extrapolation_method=atm_extrapolation_method)
 
             if ldint is None:
                 if ld_func != 'interp' and ld_coeffs is None:
                     ld_coeffs = self.interpolate_ldcoeffs(query_pts=query_pts, ldatm=ldatm, ld_func=ld_func, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method)
                 ldint = self.ldint(query_pts=query_pts, ldatm=ldatm, ld_func=ld_func, ld_coeffs=ld_coeffs, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method, raise_on_nans=raise_on_nans)
 
-            intensities = ndpolants['interps'] / ldint
+            intensities = 10**ndpolants['interps'] / ldint
 
         elif atm.name == 'extern_planckint' and 'extern_planckint:Inorm' in self.content:
             if intens_weighting == 'photon':
                 raise ValueError(f'the combination of atm={atm} and intens_weighting={intens_weighting} is not supported.')
             # TODO: add all other exceptions
 
-            intensities = 10**(self._log10_Inorm_extern_planckint(np.ascontiguousarray(query_pts[:,0]))-1)  # -1 is for cgs -> SI
+            intensities = 10**(self._log10_Inorm_extern_planckint(active_query_pts)-1)  # -1 is for cgs -> SI
             if ldint is None:
                 ldint = self.ldint(query_pts=query_pts, ldatm=ldatm, ld_func=ld_func, ld_coeffs=ld_coeffs, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method, raise_on_nans=raise_on_nans)
             
@@ -1225,13 +1239,13 @@ class Passband:
                 raise ValueError(f'the combination of atm={atm} and intens_weighting={intens_weighting} is not supported.')
             # TODO: add all other exceptions
 
-            intensities = 10**(self._log10_Inorm_extern_atmx(query_pts=query_pts))
+            intensities = 10**(self._log10_Inorm_extern_atmx(query_pts=active_query_pts))
 
         else:  # atm in one of the model atmospheres
             if f'{atm.name}:Imu' not in self.content:
                 raise ValueError(f'atm={atm.name} tables are not available in the {self.pbset}:{self.pbname} passband.')
 
-            ndpolants = self.ndp[atm.name].ndpolate(f'inorm@{intens_weighting}', query_pts, extrapolation_method=atm_extrapolation_method)
+            ndpolants = self.ndp[atm.name].ndpolate(f'inorm@{intens_weighting}', active_query_pts, extrapolation_method=atm_extrapolation_method)
 
             log10ints = ndpolants['interps']
             dists = ndpolants.get('dists', np.zeros_like(log10ints))
@@ -1380,13 +1394,6 @@ class Passband:
         * NotImplementedError: if `ld_func` is not supported.
         """
 
-        # LIKELY OBSOLETE:
-        # if atm.name not in ['blackbody', 'extern_planckint', 'extern_atmx', 'ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
-        #     raise RuntimeError(f'atm={atm.name} is not supported.')
-
-        # if ldatm.name not in ['none', 'ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
-        #     raise ValueError(f'ldatm={ldatm.name} is not supported.')
-
         if ld_func == 'interp':
             if atm.name == 'blackbody' and 'blackbody:Inorm' in self.content and ldatm.name in ['ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
                 # we need to apply ldatm's limb darkening to blackbody intensities:
@@ -1473,15 +1480,21 @@ class Passband:
                 pass
 
         else:  # if ld_func != 'interp':
-            mus = query_pts[:,-1]
-            reduced_query_pts = query_pts[:,:-1]
-            
+            mus = query_pts[:, -1]
+            reduced_query_pts = query_pts[:, :-1]
+
             # print(f'{query_pts=}, {mus=}, {atm=}, {ldatm=}, {ldint=}, {ld_func=}, {ld_coeffs=}, {intens_weighting=}, {atm_extrapolation_method=}, {ld_extrapolation_method=}, {blending_method=}, {return_nanmask=}')
 
             if ld_coeffs is None:
                 # LD function can be passed without coefficients; in that
                 # case we need to interpolate them from the tables.
-                ld_coeffs = self.interpolate_ldcoeffs(reduced_query_pts, ldatm, ld_func, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method)
+                ld_coeffs = self.interpolate_ldcoeffs(
+                    query_pts=reduced_query_pts,
+                    ldatm=ldatm,
+                    ld_func=ld_func,
+                    intens_weighting=intens_weighting,
+                    ld_extrapolation_method=ld_extrapolation_method
+                )
 
             ints = self.Inorm(
                 query_pts=reduced_query_pts,
