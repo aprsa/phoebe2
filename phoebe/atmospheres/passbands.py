@@ -1396,7 +1396,7 @@ class Passband:
         """
 
         if ld_func == 'interp':
-            if atm.name == 'blackbody' and 'blackbody:Inorm' in self.content and ldatm.name in ['ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
+            if atm.name == 'blackbody' and 'blackbody:Inorm' in self.content and hasattr(ldatm, 'mus'):
                 # we need to apply ldatm's limb darkening to blackbody intensities:
                 #   Imu^bb = Lmu Inorm^bb = Imu^atm / Inorm^atm * Inorm^bb
 
@@ -1439,10 +1439,10 @@ class Passband:
                 
                 return 10**log10imus_bb
             
-            elif atm.name == 'blackbody' and 'blackbody:Inorm' in self.content and ldatm.name not in ['ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
+            elif atm.name == 'blackbody' and 'blackbody:Inorm' in self.content and not hasattr(ldatm, 'mus'):
                 raise ValueError(f'{atm.name=} and {ld_func=} are incompatible with {ldatm.name=}.')
 
-            elif atm.name in ['ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay']:
+            elif hasattr(atm, 'mus'):
                 if f'{atm.name}:Imu' not in self.content:
                     raise ValueError(f'{atm.name=} tables are not available in the {self.pbset}:{self.pbname} passband.')
 
