@@ -553,11 +553,12 @@ class Passband:
             self.ptf_photon = lambda wl: interpolate.splev(wl, self.ptf_photon_func)
 
             if load_content:
-                if parse(self.phoebe_version) < parse('2.5.0.alpha'):
+                # TODO: replace with < parse('2.5.0') when 2.5.0 is released
+                if parse(self.phoebe_version) <= parse('2.4.17.dev+feature-blending'):
                     if 'blackbody:Inorm' in self.content:
-                        # 2.4.17 passbands already include bb_teffs; older versions do not.
+                        # 2.4.17+ passbands include bb_teffs; older versions do not.
                         if 'bb_teffs' not in hdul:
-                            bb_teffs = Table({'teffs': hdul['bb_func'].data['teff']}, meta={'extname': 'bb_teffs'})
+                            bb_teffs = Table({'teff': hdul['bb_func'].data['teff']}, meta={'extname': 'bb_teffs'})
                             hdul.append(fits.table_to_hdu(bb_teffs))
 
                         self.compute_intensities(atm=models.BlackbodyModelAtmosphere(), include_mus=False, include_ld=False, include_extinction=False, verbose=False)
