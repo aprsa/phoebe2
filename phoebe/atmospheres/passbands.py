@@ -554,7 +554,7 @@ class Passband:
 
             if load_content:
                 # TODO: replace with < parse('2.5.0') when 2.5.0 is released
-                if parse(self.phoebe_version) <= parse('2.4.17.dev+feature-blending'):
+                if parse(self.phoebe_version) != parse('2.4.17.dev+feature-blending'):
                     if 'blackbody:Inorm' in self.content:
                         # 2.4.17+ passbands include bb_teffs; older versions do not.
                         if 'bb_teffs' not in hdul:
@@ -577,7 +577,7 @@ class Passband:
                         hdul['ck_teffs'].data.columns.change_name('teff', 'teffs')
                         hdul['ck_loggs'].data.columns.change_name('logg', 'loggs')
                         hdul['ck_abuns'].data.columns.change_name('abun', 'abuns')
-                        
+
                         if 'ck2004:ext' in self.content:
                             hdul['ck_ebvs'].data.columns.change_name('ebv', 'ebvs')
                             hdul['ck_rvs'].data.columns.change_name('rv', 'rvs')
@@ -604,7 +604,7 @@ class Passband:
                         continue
 
                     if f'{atm.name}:Inorm' in self.content:
-                        basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name.upper()}'].data[name])) for name in atm.basic_axis_names])
+                        basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name}'].data[name])) for name in atm.basic_axis_names])
                         self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
                         self.ndp[atm.name].register('inorm@photon', None, hdul[f'{atm.prefix}npgrid'].data)
                         self.ndp[atm.name].register('inorm@energy', None, hdul[f'{atm.prefix}negrid'].data)
