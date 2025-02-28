@@ -10278,20 +10278,23 @@ class Bundle(ParameterSet):
                 # all other backends that do not have this parameter, the following
                 # expression will default to 'none'.
                 ld_extrapolation_method = compute_ps.get_value(qualifier='ld_blending_method', component=ldcs_param.component, default='none', **_skip_filter_checks)
-                
+
                 if is_bol:
                     intens_weighting = 'energy'
                 else:
                     intens_weighting = self.get_value(qualifier='intens_weighting', dataset=ldcs_param.dataset, context='dataset', check_visible=False)
                 logger.info("{} ld_coeffs lookup for dataset='{}' component='{}' passband='{}' from ld_coeffs_source='{}'".format(ld_func, ldcs_param.dataset, ldcs_param.component, passband, ldcs))
-                logger.debug("pb.interpolate_ldcoeffs(teff={} logg={}, abun={}, ld_coeffs={} ld_func={} intens_weighting={})".format(teff, logg, abun, ldcs, ld_func, intens_weighting))
+                logger.debug(f"pb.interpolate_ldcoeffs({teff=} {logg=}, {abun=}, {ldcs=} {ld_func=} {intens_weighting=})")
 
-                query_pts = np.array([[teff, logg, abun],])
+                # TODO: generalize this.
+                query_cols = ('teffs', 'loggs', 'abuns')
+                query_pts = np.array(((teff, logg, abun),))
+                query_table = (query_cols, query_pts)
 
                 # interpolate_ldcoeffs() always returns an array, so we need
                 # the first element of the array.
                 ld_coeffs = pb.interpolate_ldcoeffs(
-                    query_pts=query_pts,
+                    query_table=query_table,
                     ldatm=models.atm_from_name(ldcs),
                     ld_func=ld_func,
                     intens_weighting=intens_weighting,
@@ -10778,10 +10781,12 @@ class Bundle(ParameterSet):
                     pb = get_passband(passband, content=required_content)
 
                     atm_model = models.atm_from_name(atms[component])
-                    query_pts = np.ascontiguousarray( ((teffs[component], loggs[component], abuns[component]),) )
+                    query_cols = ['teffs', 'loggs', 'abuns']
+                    query_pts = np.atleast_2d(np.stack((teffs[component], loggs[component], abuns[component])).T)
+                    query_table = (query_cols, query_pts)
 
                     abs_normal_intensities = pb.Inorm(
-                        query_pts=query_pts,
+                        query_table=query_table,
                         atm=atm_model,
                         ldatm=atm_model,
                         ldint=None,
@@ -10794,7 +10799,7 @@ class Bundle(ParameterSet):
                     )['inorms']
 
                     ldint = pb.ldint(
-                        query_pts=query_pts,
+                        query_table=query_table,
                         ldatm=atm_model,
                         ld_func=ld_func,
                         ld_coeffs=ld_coeffs,

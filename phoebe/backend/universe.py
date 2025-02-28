@@ -1819,7 +1819,7 @@ class Star(Body):
         else:
             raise NotImplementedError
 
-        logger.debug(f'{ld_func=}, {ld_coeffs=}, {atm_model=}, {ldatm_model=}')
+        logger.debug(f'{ld_mode=}, {ld_func=}, {ld_coeffs=}, {atm_model=}, {ldatm_model=}')
 
         if lc_method == 'numerical':
             pb = passbands.get_passband(passband)
@@ -1838,26 +1838,32 @@ class Star(Body):
             self.set_ptfarea(dataset, ptfarea)
 
             # figure out what columns need to be packed into query_pts:
-            columns = atm_model.basic_axis_names
-            if ldatm_model is not None:
+            query_cols = atm_model.basic_axis_names.copy()
+            if ldatm_model is not None and ldatm_model != atm_model:
                 # add any new ldatm columns:
                 # note: can't use set() because the order is arbitrary
-                columns += [column for column in ldatm_model.basic_axis_names if column not in columns]
+                query_cols += [column for column in ldatm_model.basic_axis_names if column not in query_cols]
 
             query_pts = np.stack((
-                [getattr(self.mesh, column).for_computations for column in columns]
+                [getattr(self.mesh, column).for_computations for column in query_cols]
             )).T
 
-            # Inorm/Imu are smart enough to extract teffs for atm='blackbody'
-            # so we don't need to worry about that here.
-            # query_pts = np.stack((
-            #     self.mesh.teffs.for_computations,
-            #     self.mesh.loggs.for_computations,
-            #     self.mesh.abuns.for_computations
-            # )).T
+            # TODO: change this once mus are stored as a column in the mesh
+            # if hasattr(atm_model, 'mus') or hasattr(ldatm_model, 'mus'):
+            query_cols += ['mus']
+            query_pts = np.c_[query_pts, np.abs(self.mesh.mus_for_computations)]
+
+            if extinct != 0.0 and not ignore_effects:
+                query_cols += ['ebvs', 'rvs']
+                query_pts = np.c_[
+                    np.full_like(query_pts, fill_value=extinct),
+                    np.full_like(query_pts, fill_value=Rv)
+                ]
+
+            query_table = (query_cols, query_pts)
 
             ldint = pb.ldint(
-                query_pts=query_pts,
+                query_table=query_table,
                 ldatm=ldatm_model,
                 ld_func=ld_func if ld_mode != 'interp' else ld_mode,
                 ld_coeffs=ld_coeffs,
@@ -1867,7 +1873,7 @@ class Star(Body):
             )
 
             abs_normal_intensities = pb.Inorm(
-                query_pts=query_pts,
+                query_table=query_table,
                 atm=atm_model,
                 ldatm=ldatm_model,
                 ldint=ldint,
@@ -1879,16 +1885,8 @@ class Star(Body):
                 blending_method=blending_method
             )['inorms']
 
-            # add mus to query points:
-            query_pts = np.c_[query_pts, np.abs(self.mesh.mus_for_computations)]
-
-            # abs_intensities are the projected (limb-darkened) passband intensities
-            # TODO: why do we need to use abs(mus) here?
-            # ! Because the interpolation within Imu will otherwise fail.
-            # ! It would be best to pass only [visibilities > 0] elements to Imu.
-
             abs_intensities = pb.Imu(
-                query_pts=query_pts,
+                query_table=query_table,
                 atm=atm_model,
                 ldatm=ldatm_model,
                 ldint=ldint,
@@ -1918,10 +1916,8 @@ class Star(Body):
             if extinct == 0.0 or ignore_effects:
                 extinct_factors = 1.0
             else:
-                # TODO: fix this autrocity below:
-                query_pts = np.c_[query_pts[:,:-1], np.full_like(query_pts[:,0], fill_value=extinct), np.full_like(query_pts[:,0], fill_value=Rv)]
                 extinct_factors = pb.interpolate_extinct(
-                    query_pts=query_pts,
+                    query_table=query_table,
                     atm=atm_model,
                     intens_weighting=intens_weighting,
                     extrapolation_method=atm_extrapolation_method

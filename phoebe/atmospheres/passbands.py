@@ -943,7 +943,7 @@ class Passband:
                 self.content.append(f'{atm.name}:ldint')
             self.add_to_history(f'LD integrals for {atm.name} added.')
 
-    def interpolate_ldcoeffs(self, query_pts, ldatm=models.CK2004ModelAtmosphere, ld_func='power', intens_weighting='photon', ld_extrapolation_method='none'):
+    def interpolate_ldcoeffs(self, query_table, ldatm=models.CK2004ModelAtmosphere, ld_func='power', intens_weighting='photon', ld_extrapolation_method='none'):
         """
         Interpolate the passband-stored table of LD model coefficients.
 
@@ -966,12 +966,12 @@ class Passband:
         """
 
         s = {
-            'linear': np.s_[:,:1],
-            'logarithmic': np.s_[:,1:3],
-            'square_root': np.s_[:,3:5],
-            'quadratic': np.s_[:,5:7],
-            'power': np.s_[:,7:11],
-            'all': np.s_[:,:]
+            'linear': np.s_[:, :1],
+            'logarithmic': np.s_[:, 1:3],
+            'square_root': np.s_[:, 3:5],
+            'quadratic': np.s_[:, 5:7],
+            'power': np.s_[:, 7:11],
+            'all': np.s_[:, :]
         }
 
         if ld_func not in s.keys():
@@ -980,19 +980,15 @@ class Passband:
         if f'{ldatm.name}:ld' not in self.content:
             raise ValueError(f'Limb darkening coefficients for {ldatm.name} atmosphere are not available.')
 
-        # if query_pts need to be reduced:
-        active_query_pts = query_pts
-        if len(ldatm.basic_axis_names) < query_pts.shape[0]:
-            active_query_pts = query_pts[:, :len(ldatm.basic_axis_names)]
+        # limb darkening coefficients depend only on basic axes:
+        query_cols = [i for i, col in enumerate(query_table[0]) if col in ldatm.basic_axis_names]
+        query_pts = np.ascontiguousarray(query_table[1][:, query_cols])
 
-        ld_coeffs = self.ndp[ldatm.name].ndpolate(
-            f'ld@{intens_weighting}',
-            query_pts=active_query_pts,
-            extrapolation_method=ld_extrapolation_method)
+        ld_coeffs = self.ndp[ldatm.name].ndpolate(f'ld@{intens_weighting}', query_pts=query_pts, extrapolation_method=ld_extrapolation_method)
 
         return ld_coeffs['interps'][s[ld_func]]
 
-    def interpolate_extinct(self, query_pts, atm=models.CK2004ModelAtmosphere, intens_weighting='photon', extrapolation_method='none'):
+    def interpolate_extinct(self, query_table, atm=models.CK2004ModelAtmosphere, intens_weighting='photon', extrapolation_method='none'):
         """
         Interpolates the passband-stored tables of extinction corrections
 
@@ -1015,8 +1011,11 @@ class Passband:
         if f'{atm.name}:ext' not in self.content:
             raise ValueError(f"extinction factors for atm={atm.name} not found for the {self.pbset}:{self.pbname} passband.")
 
+        # extinction coefficients depend on basic axes, ebvs and rvs:
+        query_cols = [i for i, col in enumerate(query_table[0]) if col in atm.basic_axis_names + ['ebvs', 'rvs']]
+        query_pts = np.ascontiguousarray(query_table[1][:, query_cols])
+
         extinct_factor = self.ndp[atm.name].ndpolate(f'ext@{intens_weighting}', query_pts, extrapolation_method=extrapolation_method)['interps']
-        # print(f'{query_pts=} {extinct_factor=}')
         return extinct_factor
 
     def import_wd_atmcof(self, plfile, atmfile, wdidx, Nabun=19, Nlogg=11, Npb=25, Nints=4):
@@ -1082,7 +1081,7 @@ class Passband:
 
         return log10_Inorm.reshape(-1, 1)
 
-    def _log10_Inorm_extern_atmx(self, query_pts):
+    def _log10_Inorm_extern_atmx(self, query_table):
         """
         Internal function to compute normal passband intensities using
         the external WD machinery that employs model atmospheres and
@@ -1090,17 +1089,24 @@ class Passband:
 
         Arguments
         ----------
-        * `query_pts` (ndarray, required): a C-contiguous DxN array of queried points
+        * `query_table` (tuple, required): a (query_cols, query_pts) tuple
+          where query_cols is an array of column labels that must match
+          <models.ModelAtmosphere> basic_axis_names, and query_pts is a
+          C-contiguous DxN array of queried points
 
         Returns
         ----------
         * log10(Inorm)
         """
 
+        # atmx intensities depend on basic axes:
+        query_cols = [i for i, col in enumerate(query_table[0]) if col in models.WDKurucz93ModelAtmosphere.basic_axis_names]
+        query_pts = np.ascontiguousarray(query_table[1][:, query_cols])
+
         log10_Inorm = libphoebe.wd_atmint(
-            np.ascontiguousarray(query_pts[:,0]),  # teff
-            np.ascontiguousarray(query_pts[:,1]),  # logg
-            np.ascontiguousarray(query_pts[:,2]),  # abun
+            np.ascontiguousarray(query_pts[:, 0]),  # teffs
+            np.ascontiguousarray(query_pts[:, 1]),  # loggs
+            np.ascontiguousarray(query_pts[:, 2]),  # abuns
             self.extern_wd_idx,
             self.wd_data["planck_table"],
             self.wd_data["atm_table"]
@@ -1108,7 +1114,7 @@ class Passband:
 
         return log10_Inorm.reshape(-1, 1)
 
-    def Inorm(self, query_pts, atm=models.CK2004ModelAtmosphere, ldatm=models.CK2004ModelAtmosphere, ldint=None, ld_func='interp', ld_coeffs=None, intens_weighting='photon', atm_extrapolation_method='none', ld_extrapolation_method='none', blending_method='none', blending_margin=3, dist_threshold=1e-5):
+    def Inorm(self, query_table, atm=models.CK2004ModelAtmosphere, ldatm=models.CK2004ModelAtmosphere, ldint=None, ld_func='interp', ld_coeffs=None, intens_weighting='photon', atm_extrapolation_method='none', ld_extrapolation_method='none', blending_method='none', blending_margin=3, dist_threshold=1e-5):
         r"""
         Computes normal emergent passband intensity.
 
@@ -1131,9 +1137,13 @@ class Passband:
 
         Arguments
         ----------
-        * `query_pts` (ndarray, required): a C-contiguous DxN array of queried points
-        * `atm` (<models.ModelAtmosphere>, optional, default=CK2004ModelAtmosphere): model atmosphere to be
-          used for calculation
+        * `query_table` (tuple, required): a (query_cols, query_pts) tuple
+          where query_cols is an array of column labels that must match
+          <models.ModelAtmosphere> basic_axis_names, and query_pts is a
+          C-contiguous DxN array of queried points
+        * `atm` (<models.ModelAtmosphere>, optional,
+          default=CK2004ModelAtmosphere): model atmosphere to be used for
+          calculation
         * `ldatm` (string, optional, default='ck2004'): model atmosphere to be
           used for limb darkening coefficients
         * `ldint` (string, optional, default=None): integral of the limb
@@ -1198,10 +1208,9 @@ class Passband:
         raise_on_nans = True if atm_extrapolation_method == 'none' else False
         blending_factors = None
 
-        # reduce query_pts if necessary for intensity computation:
-        active_query_pts = query_pts
-        if len(atm.basic_axis_names) != query_pts.shape[1]:
-            active_query_pts = np.ascontiguousarray(query_pts[:,:len(atm.basic_axis_names)])
+        # normal intensities depend only on basic axes:
+        query_cols = [i for i, col in enumerate(query_table[0]) if col in atm.basic_axis_names]
+        query_pts = np.ascontiguousarray(query_table[1][:, query_cols])
 
         if atm.name == 'blackbody' and 'blackbody:Inorm' in self.content:
             # check if the required tables for the chosen ldatm are available:
@@ -1214,12 +1223,12 @@ class Passband:
             # if blending_method == 'blackbody':
             #     raise ValueError(f'the combination of {atm.name} atmosphere and blending_method={blending_method} is not valid.')
 
-            ndpolants = self.ndp[atm.name].ndpolate(f'inorm@{intens_weighting}', query_pts=active_query_pts, extrapolation_method=atm_extrapolation_method)
+            ndpolants = self.ndp[atm.name].ndpolate(f'inorm@{intens_weighting}', query_pts=query_pts, extrapolation_method=atm_extrapolation_method)
 
             if ldint is None:
                 if ld_func != 'interp' and ld_coeffs is None:
-                    ld_coeffs = self.interpolate_ldcoeffs(query_pts=query_pts, ldatm=ldatm, ld_func=ld_func, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method)
-                ldint = self.ldint(query_pts=query_pts, ldatm=ldatm, ld_func=ld_func, ld_coeffs=ld_coeffs, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method, raise_on_nans=raise_on_nans)
+                    ld_coeffs = self.interpolate_ldcoeffs(query_table=query_table, ldatm=ldatm, ld_func=ld_func, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method)
+                ldint = self.ldint(query_table=query_table, ldatm=ldatm, ld_func=ld_func, ld_coeffs=ld_coeffs, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method, raise_on_nans=raise_on_nans)
 
             intensities = 10**ndpolants['interps'] / ldint
 
@@ -1228,10 +1237,10 @@ class Passband:
                 raise ValueError(f'the combination of atm={atm} and intens_weighting={intens_weighting} is not supported.')
             # TODO: add all other exceptions
 
-            intensities = 10**(self._log10_Inorm_extern_planckint(active_query_pts)-1)  # -1 is for cgs -> SI
+            intensities = 10**(self._log10_Inorm_extern_planckint(query_pts)-1)  # -1 is for cgs -> SI
             if ldint is None:
-                ldint = self.ldint(query_pts=query_pts, ldatm=ldatm, ld_func=ld_func, ld_coeffs=ld_coeffs, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method, raise_on_nans=raise_on_nans)
-            
+                ldint = self.ldint(query_table=query_table, ldatm=ldatm, ld_func=ld_func, ld_coeffs=ld_coeffs, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method, raise_on_nans=raise_on_nans)
+
             # print(f'{intensities.shape=} {ldint.shape=} {intensities[:5]=} {ldint[:5]=}')
             intensities /= ldint
 
@@ -1240,20 +1249,20 @@ class Passband:
                 raise ValueError(f'the combination of atm={atm} and intens_weighting={intens_weighting} is not supported.')
             # TODO: add all other exceptions
 
-            intensities = 10**(self._log10_Inorm_extern_atmx(query_pts=active_query_pts))
+            intensities = 10**(self._log10_Inorm_extern_atmx(query_table=query_table))
 
         else:  # atm in one of the model atmospheres
             if f'{atm.name}:Imu' not in self.content:
                 raise ValueError(f'atm={atm.name} tables are not available in the {self.pbset}:{self.pbname} passband.')
 
-            ndpolants = self.ndp[atm.name].ndpolate(f'inorm@{intens_weighting}', active_query_pts, extrapolation_method=atm_extrapolation_method)
+            ndpolants = self.ndp[atm.name].ndpolate(f'inorm@{intens_weighting}', query_pts, extrapolation_method=atm_extrapolation_method)
 
             log10ints = ndpolants['interps']
             dists = ndpolants.get('dists', np.zeros_like(log10ints))
 
             if np.any(dists > dist_threshold) and blending_method == 'blackbody':
                 ints_bb = self.Inorm(
-                    query_pts=query_pts,
+                    query_table=query_table,
                     atm=models.BlackbodyModelAtmosphere,
                     ldatm=ldatm,
                     ldint=ldint,
@@ -1283,40 +1292,43 @@ class Passband:
 
         return ints
 
-    def _log10_Imu(self, atm, query_pts, intens_weighting='photon', atm_extrapolation_method='none', ld_extrapolation_method='none', blending_method='none', raise_on_nans=True):
+    def _log10_Imu(self, atm, query_table, intens_weighting='photon', atm_extrapolation_method='none', ld_extrapolation_method='none', blending_method='none', raise_on_nans=True):
         """
         Computes specific emergent passband intensities for model atmospheres.
 
         Parameters
         ----------
-        atm : string
-            model atmosphere ('ck2004', 'phoenix', 'tmap_sdO', 'tmap_DA', 'tmap_DAO', 'tmap_DO', 'tremblay')
-        * `query_pts` (ndarray, required): a C-contiguous DxN array of queried points
-        intens_weighting : str, optional
-            intensity weighting scheme, by default 'photon'
-        atm_extrapolation_method : str, optional
-            out-of-bounds intensity extrapolation method, by default 'none'
-        ld_extrapolation_method : str, optional
-            out-of-bounds limb darkening extrapolation method, by default
-            'none'
-        blending_method : str, optional
-            out-of-bounds blending method, by default 'none'
-        raise_on_nans : bool, optional
-            should an error be raised on failed intensity lookup, by default
-            True
+        * `atm` (str, required): model atmosphere
+        * `query_table` (tuple, required): a (query_cols, query_pts) tuple
+          where query_cols is an array of column labels that must match
+          <models.ModelAtmosphere> basic_axis_names, and query_pts is a
+          C-contiguous DxN array of queried points
+        * `intens_weighting` (string, optional): intensity weighting scheme,
+          by default 'photon'
+        * `atm_extrapolation_method` (str, optional): out-of-bounds intensity
+          extrapolation method, by default 'none'
+        * `ld_extrapolation_method` (str, optional): out-of-bounds limb
+          darkening extrapolation method, by default 'none'
+        * `blending_method` (str, optional): out-of-bounds blending method, by
+          default 'none'
+        * `raise_on_nans` (bool, optional): should an error be raised on
+          failed intensity lookup, by default True
 
         Returns
         -------
-        log10_Imu : dict
-            keys: 'interps' (required), 'dists' (optional)
-            interpolated (possibly extrapolated, blended) model atmosphre
-            intensity
+        * `log10_Imu` (dict)
+            keys: 'interps' (required), 'dists' (optional) interpolated
+            (possibly extrapolated, blended) model atmosphre intensity
 
         Raises
         ------
         ValueError
             when interpolants are nan and raise_on_nans=True
         """
+
+        # specific intensities depend on basic axes and mus:
+        query_cols = [i for i, col in enumerate(query_table[0]) if col in atm.basic_axis_names + ['mus']]
+        query_pts = np.ascontiguousarray(query_table[1][:, query_cols])
 
         ndpolants = self.ndp[atm].ndpolate(f'imu@{intens_weighting}', query_pts, extrapolation_method=atm_extrapolation_method)
         log10_Imu = ndpolants['interps']
@@ -1330,20 +1342,24 @@ class Passband:
             return ndpolants
 
         if blending_method == 'blackbody':
-            log10_Imu_bb = np.log10(self.Imu(query_pts=query_pts[nanmask], atm='blackbody', ldatm=atm, ld_extrapolation_method=ld_extrapolation_method, intens_weighting=intens_weighting))
+            # TODO: needs revision
+            log10_Imu_bb = np.log10(self.Imu(query_table=query_table[nanmask], atm=models.BlackbodyModelAtmosphere, ldatm=atm, ld_extrapolation_method=ld_extrapolation_method, intens_weighting=intens_weighting))
             log10_Imu_blended = log10_Imu[:]
             log10_Imu_blended[nanmask] = np.min(dists[nanmask], 3)*log10_Imu_bb[nanmask] + np.max(3-dists[nanmask], 0)*log10_Imu[nanmask]
             return {'interps': log10_Imu_blended, 'dists': dists}
 
         return ndpolants
 
-    def Imu(self, query_pts, atm=models.CK2004ModelAtmosphere, ldatm=models.CK2004ModelAtmosphere, ldint=None, ld_func='interp', ld_coeffs=None, intens_weighting='photon', atm_extrapolation_method='none', ld_extrapolation_method='none', blending_method='none', dist_threshold=1e-5, blending_margin=3):
+    def Imu(self, query_table, atm=models.CK2004ModelAtmosphere, ldatm=models.CK2004ModelAtmosphere, ldint=None, ld_func='interp', ld_coeffs=None, intens_weighting='photon', atm_extrapolation_method='none', ld_extrapolation_method='none', blending_method='none', dist_threshold=1e-5, blending_margin=3):
         r"""
         Computes specific emergent passband intensities.
 
         Arguments
         ----------
-        * `query_pts` (ndarray, required): a C-contiguous DxN array of queried points
+        * `query_table` (tuple, required): a (query_cols, query_pts) tuple
+          where query_cols is an array of column labels that must match
+          <models.ModelAtmosphere> basic_axis_names, and query_pts is a
+          C-contiguous DxN array of queried points
         * `atm` (string, optional, default='ck2004'): model atmosphere to be
           used for calculation
         * `ldatm` (string, optional, default='ck2004'): model atmosphere to be
@@ -1395,22 +1411,26 @@ class Passband:
         * NotImplementedError: if `ld_func` is not supported.
         """
 
+        # specific intensities depend on basic axes and mus:
+        query_cols = [i for i, col in enumerate(query_table[0]) if col in atm.basic_axis_names + ['mus']]
+        query_pts = np.ascontiguousarray(query_table[1][:, query_cols])
+
         if ld_func == 'interp':
             if atm.name == 'blackbody' and 'blackbody:Inorm' in self.content and hasattr(ldatm, 'mus'):
                 # we need to apply ldatm's limb darkening to blackbody intensities:
                 #   Imu^bb = Lmu Inorm^bb = Imu^atm / Inorm^atm * Inorm^bb
 
-                # print(f'{atm=} {ld_func=} {ldatm=} {intens_weighting=} {query_pts=} {atm_extrapolation_method=}')
-
-                ndpolants = self.ndp[ldatm.name].ndpolate(f'imu@{intens_weighting}', query_pts, extrapolation_method=atm_extrapolation_method)
+                ndpolants = self.Imu(
+                    atm=ldatm,
+                    query_table=query_table,
+                    intens_weighting=intens_weighting,
+                    atm_extrapolation_method=atm_extrapolation_method,
+                    ld_extrapolation_method=ld_extrapolation_method)['interps']
                 log10imus_atm = ndpolants['interps']
                 dists = ndpolants.get('dists', np.zeros_like(log10imus_atm))
 
-                reduced_query_pts = query_pts[:,:-1]
-                # print(f'{reduced_query_pts.shape=} {atm=} {ldatm=} {ldint=} {ld_func=} {ld_coeffs=} {intens_weighting=} {atm_extrapolation_method=} {ld_extrapolation_method=} {blending_method=}')
-
                 ints_atm = self.Inorm(
-                    query_pts=reduced_query_pts,
+                    query_table=query_table,
                     atm=ldatm,
                     ldatm=ldatm,
                     ldint=ldint,
@@ -1423,7 +1443,7 @@ class Passband:
                 log10inorms_atm = np.log10(ints_atm['inorms'])
 
                 ints_bb = self.Inorm(
-                    query_pts=reduced_query_pts,
+                    query_table=query_table,
                     atm=models.BlackbodyModelAtmosphere,
                     ldatm=ldatm,
                     ldint=ldint,
@@ -1450,6 +1470,7 @@ class Passband:
                 log10imus_atm = ndpolants['interps']
                 dists = ndpolants.get('dists', np.zeros_like(log10imus_atm))
 
+                # TODO: revision needed!
                 if np.any(dists > dist_threshold) and blending_method == 'blackbody':
                     off_grid = (dists > dist_threshold).flatten()
                     # print(f'{query_pts.shape=} {off_grid.shape=}')
@@ -1481,16 +1502,11 @@ class Passband:
                 pass
 
         else:  # if ld_func != 'interp':
-            mus = query_pts[:, -1]
-            reduced_query_pts = query_pts[:, :-1]
-
-            # print(f'{query_pts=}, {mus=}, {atm=}, {ldatm=}, {ldint=}, {ld_func=}, {ld_coeffs=}, {intens_weighting=}, {atm_extrapolation_method=}, {ld_extrapolation_method=}, {blending_method=}, {return_nanmask=}')
-
             if ld_coeffs is None:
                 # LD function can be passed without coefficients; in that
                 # case we need to interpolate them from the tables.
                 ld_coeffs = self.interpolate_ldcoeffs(
-                    query_pts=reduced_query_pts,
+                    query_table=query_table,
                     ldatm=ldatm,
                     ld_func=ld_func,
                     intens_weighting=intens_weighting,
@@ -1498,7 +1514,7 @@ class Passband:
                 )
 
             ints = self.Inorm(
-                query_pts=reduced_query_pts,
+                query_table=query_table,
                 atm=atm,
                 ldatm=ldatm,
                 ldint=ldint,
@@ -1510,23 +1526,34 @@ class Passband:
                 blending_method=blending_method
             )
 
+            mus = query_table[1][:, query_table[0].index('mus')]
             ld = self.ld_func(ld_func=ld_func, mu=mus, ld_coeffs=ld_coeffs).reshape(-1, 1)
 
             return ints['inorms'] * ld
 
-    def ldint(self, query_pts, ldatm=models.CK2004ModelAtmosphere, ld_func='linear', ld_coeffs=np.array([[0.5]]), intens_weighting='photon', ld_extrapolation_method='none', raise_on_nans=True):
+    def ldint(self, query_table, ldatm=models.CK2004ModelAtmosphere, ld_func='linear', ld_coeffs=np.array([[0.5]]), intens_weighting='photon', ld_extrapolation_method='none', raise_on_nans=True):
         """
         Computes ldint value for the given `ld_func` and `ld_coeffs`.
 
         Arguments
         ----------
-        * `query_pts` (ndarray, required): a C-contiguous DxN array of queried points
-        * `ldatm` (<models.ModelAtmosphere> subclass, optional, default=<models.CK2004ModelAtmosphere>): limb darkening model atmosphere
-        * `ld_func` (string, optional, default='linear'): limb darkening function
-        * `ld_coeffs` (array, optional, default=[[0.5]]): limb darkening coefficients
-        * `intens_weighting` (string, optional, default='photon'): intensity weighting mode
-        * `ld_extrapolation_mode` (string, optional, default='none): extrapolation mode
-        * `raise_on_nans` (boolean, optional, default=True): should any nans raise an exception
+        * `query_table` (tuple, required): a (query_cols, query_pts) tuple
+          where query_cols is an array of column labels that must match
+          <models.ModelAtmosphere> basic_axis_names, and query_pts is a
+          C-contiguous DxN array of queried points
+        * `ldatm` (<models.ModelAtmosphere> subclass, optional,
+          default=<models.CK2004ModelAtmosphere>): limb darkening model
+          atmosphere
+        * `ld_func` (string, optional, default='linear'): limb darkening
+          function
+        * `ld_coeffs` (array, optional, default=[[0.5]]): limb darkening
+          coefficients
+        * `intens_weighting` (string, optional, default='photon'): intensity
+          weighting mode
+        * `ld_extrapolation_mode` (string, optional, default='none):
+          extrapolation mode
+        * `raise_on_nans` (boolean, optional, default=True): should any nans
+          raise an exception
 
         Returns
         -------
@@ -1534,6 +1561,9 @@ class Passband:
         """
 
         if ld_func == 'interp':
+            # ldints depend only on basic ldatm axes:
+            query_cols = [i for i, col in enumerate(query_table[0]) if col in ldatm.basic_axis_names]
+            query_pts = np.ascontiguousarray(query_table[1][:, query_cols])
             ldints = self.ndp[ldatm.name].ndpolate(f'ldint@{intens_weighting}', query_pts, extrapolation_method=ld_extrapolation_method)['interps']
             return ldints
 
@@ -1541,9 +1571,11 @@ class Passband:
             ld_coeffs = np.atleast_2d(ld_coeffs)
 
         if ld_coeffs is None:
-            ld_coeffs = self.interpolate_ldcoeffs(query_pts=query_pts, ldatm=ldatm, ld_func=ld_func, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method)
+            query_cols = [i for i, col in enumerate(query_table[0]) if col in ldatm.basic_axis_names]
+            query_pts = np.ascontiguousarray(query_table[1][:, query_cols])
+            ld_coeffs = self.interpolate_ldcoeffs(query_table=query_table, ldatm=ldatm, ld_func=ld_func, intens_weighting=intens_weighting, ld_extrapolation_method=ld_extrapolation_method)
 
-        ldints = np.ones(shape=(len(query_pts), 1))
+        ldints = np.ones(shape=(len(query_table[1]), 1))
 
         if ld_func == 'linear':
             ldints[:,0] *= 1-ld_coeffs[:,0]/3

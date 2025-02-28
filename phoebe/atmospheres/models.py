@@ -222,6 +222,7 @@ class WDBlackbodyModelAtmosphere(ModelAtmosphere):
     """
 
     name = 'extern_planckint'
+    basic_axis_names = ['teffs']
     external = True
 
 
@@ -247,7 +248,7 @@ class BlackbodyModelAtmosphere(ModelAtmosphere):
     prefix = 'bb'
 
     basic_axis_names = ['teffs']
-    teffs = 10**np.linspace(2.5, 5.7, 97)  # this corresponds to the 316K-501187K range.
+    teffs = np.logspace(2.5, 5.7, 500)  # this corresponds to the 316K-501187K range.
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

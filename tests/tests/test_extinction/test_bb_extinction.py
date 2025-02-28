@@ -38,10 +38,12 @@ def test_bb_extinction():
     Alam = 10**(-0.4 * ebvs * (rvs * ax + bx))  # (101, 11)
     iext_predicted = np.trapz(bb_sed * Alam, axis=0) / np.trapz(bb_sed, axis=0)
 
+    query_cols = ['teffs', 'ebvs', 'rvs']
     query_pts = np.vstack((teffs, ebvs, rvs)).T
+    query_table = (query_cols, query_pts)
 
     atm = phoebe.atmospheres.models.BlackbodyModelAtmosphere()
-    iext = pb.interpolate_extinct(query_pts=query_pts, atm=atm, intens_weighting='photon', extrapolation_method='none').flatten()
+    iext = pb.interpolate_extinct(query_table=query_table, atm=atm, intens_weighting='photon', extrapolation_method='none').flatten()
 
     assert np.allclose(iext, iext_predicted, atol=2e-3, rtol=2e-3)
 
@@ -66,6 +68,8 @@ def test_frontend():
     b['Rv'] = 3.1
     b['ebv'] = 0.3
     b.run_compute(model='lc_ext', irrad_method='none')
+
+    print(b['value@fluxes@lc_ext'])
 
     assert np.mean(b['value@fluxes@lc_ext']/b['value@fluxes@lc_no_ext'])-0.785 < 1e-3
 
