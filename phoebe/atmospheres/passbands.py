@@ -561,7 +561,14 @@ class Passband:
                             bb_teffs = Table({'teff': hdul['bb_func'].data['teff']}, meta={'extname': 'bb_teffs'})
                             hdul.append(fits.table_to_hdu(bb_teffs))
 
-                        self.compute_intensities(atm=models.BlackbodyModelAtmosphere(), include_mus=False, include_ld=False, include_extinction=False, verbose=False)
+                        self.compute_intensities(
+                            atm=models.BlackbodyModelAtmosphere(),
+                            include_mus=False,
+                            include_ld=False,
+                            include_extinction='blackbody:ext' in self.content,
+                            verbose=False
+                        )
+
                         hdul['bb_teffs'].data.columns.change_name('teff', 'teffs')
                         if 'blackbody:ext' in self.content:
                             hdul['bb_ebvs'].data.columns.change_name('ebv', 'ebvs')
@@ -599,28 +606,33 @@ class Passband:
                     self.wd_data = libphoebe.wd_readdata(planck, atm_file)
                     self.extern_wd_idx = header['wd_idx']
 
-                for atm in models._atmtable:
+                # Model atmospheres in the passband file:
+                atms = set([entry.split(':')[0] for entry in self.content])
+
+                # We have to iterate over available atms rather than stored atms because
+                # the stored atms may not be available in the current version of PHOEBE.
+                available_atms = models.ModelAtmosphere.__subclasses__()
+                for atm in available_atms:
+                    if atm.name not in atms:
+                        continue
+
                     if atm.external:
                         continue
 
+                    basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name}'].data[name])) for name in atm.basic_axis_names])
+                    self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
+
                     if f'{atm.name}:Inorm' in self.content:
-                        basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name}'].data[name])) for name in atm.basic_axis_names])
-                        self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
                         self.ndp[atm.name].register('inorm@photon', None, hdul[f'{atm.prefix}npgrid'].data)
                         self.ndp[atm.name].register('inorm@energy', None, hdul[f'{atm.prefix}negrid'].data)
 
                     if f'{atm.name}:Imu' in self.content:
-                        basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name.upper()}'].data[name])) for name in atm.basic_axis_names])
-
                         atm_photon_grid = hdul[f'{atm.prefix}FPGRID'].data
                         atm_energy_grid = hdul[f'{atm.prefix}FEGRID'].data
 
-                        # ndpolator instance for interpolating and extrapolating:
-                        self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
-
                         # normal passband intensities:
-                        self.ndp[atm.name].register('inorm@photon', None, atm_photon_grid[...,-1,:])
-                        self.ndp[atm.name].register('inorm@energy', None, atm_energy_grid[...,-1,:])
+                        self.ndp[atm.name].register('inorm@photon', None, atm_photon_grid[..., -1, :])
+                        self.ndp[atm.name].register('inorm@energy', None, atm_energy_grid[..., -1, :])
 
                         # specific passband intensities:
                         self.ndp[atm.name].register('imu@photon', (atm.mus,), atm_photon_grid)
@@ -994,8 +1006,8 @@ class Passband:
 
         Arguments
         ----------
-        * `query_pts` (ndarray): an NxD-dimensional ndarray, where N is the number of query points and D their dimension
-        * `atm` (string, optional, default='blackbody'): atmosphere model.
+        * `query_table`
+        * `atm`
         * `intens_weighting`
         * `extrapolation_method`
 

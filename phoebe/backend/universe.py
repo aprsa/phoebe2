@@ -1855,10 +1855,9 @@ class Star(Body):
 
             if extinct != 0.0 and not ignore_effects:
                 query_cols += ['ebvs', 'rvs']
-                query_pts = np.c_[
-                    np.full_like(query_pts, fill_value=extinct),
-                    np.full_like(query_pts, fill_value=Rv)
-                ]
+                ebvs = np.full_like(query_pts[:, 0], fill_value=extinct)
+                rvs = np.full_like(query_pts[:, 0], fill_value=Rv)
+                query_pts = np.c_[query_pts, ebvs, rvs]
 
             query_table = (query_cols, query_pts)
 
