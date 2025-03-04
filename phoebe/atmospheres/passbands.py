@@ -458,8 +458,8 @@ class Passband:
                     bb_func = Table({'teff': bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
                     data.append(fits.table_to_hdu(bb_func))
                 else:
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy']['grid'], name=f'{atm.prefix.upper()}NEGRID'))
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon']['grid'], name=f'{atm.prefix.upper()}NPGRID'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy']['grid'], name=f'{atm.prefix}negrid'))
+                    data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon']['grid'], name=f'{atm.prefix}npgrid'))
 
                 content.append(f'{atm.name}:Inorm')
 
@@ -553,14 +553,13 @@ class Passband:
             self.ptf_photon = lambda wl: interpolate.splev(wl, self.ptf_photon_func)
 
             if load_content:
+                stored_atms = set([content.split(':')[0] for content in self.content])
+
                 # TODO: replace with < parse('2.5.0') when 2.5.0 is released
                 if parse(self.phoebe_version) != parse('2.4.17.dev+feature-blending'):
-                    if 'blackbody:Inorm' in self.content:
-                        # 2.4.17+ passbands include bb_teffs; older versions do not.
-                        if 'bb_teffs' not in hdul:
-                            bb_teffs = Table({'teff': hdul['bb_func'].data['teff']}, meta={'extname': 'bb_teffs'})
-                            hdul.append(fits.table_to_hdu(bb_teffs))
-
+                    if 'blackbody' in stored_atms:
+                        # blackbody atmospheres are reworked, so we need to
+                        # recompute the intensities:
                         self.compute_intensities(
                             atm=models.BlackbodyModelAtmosphere(),
                             include_mus=False,
@@ -568,18 +567,25 @@ class Passband:
                             include_extinction='blackbody:ext' in self.content,
                             verbose=False
                         )
+                        ndp = self.ndp['blackbody']  # initialized by compute_intensities()
 
-                        hdul['bb_teffs'].data.columns.change_name('teff', 'teffs')
+                        # store axes:
+                        hdul['bb_teffs'] = fits.table_to_hdu(Table({'teffs': ndp.axes[0]}, meta={'extname': 'bb_teffs'}))
                         if 'blackbody:ext' in self.content:
-                            hdul['bb_ebvs'].data.columns.change_name('ebv', 'ebvs')
-                            hdul['bb_rvs'].data.columns.change_name('rv', 'rvs')
-                            hdul['BBEGRID'].header['EXTNAME'] = 'bbxegrid'
-                            hdul['BBPGRID'].header['EXTNAME'] = 'bbxpgrid'
+                            hdul['bb_ebvs'] = fits.table_to_hdu(Table({'ebvs': ndp.axes[1]}, meta={'extname': 'bb_ebvs'}))
+                            hdul['bb_rvs'] = fits.table_to_hdu(Table({'rvs': ndp.axes[2]}, meta={'extname': 'bb_rvs'}))
 
+                        # store tables:
                         hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@energy']['grid'], name='bbnegrid'))
                         hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@photon']['grid'], name='bbnpgrid'))
+                        if 'blackbody:ext' in self.content:
+                            hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['ext@energy']['grid'], name='bbxegrid'))
+                            hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['ext@photon']['grid'], name='bbxpgrid'))
 
-                    stored_atms = set([content.split(':')[0] for content in self.content])
+                        # clean up:
+                        del self.ndp['blackbody']
+
+                    # rename columns in old tables:
                     if 'ck2004' in stored_atms:
                         hdul['ck_teffs'].data.columns.change_name('teff', 'teffs')
                         hdul['ck_loggs'].data.columns.change_name('logg', 'loggs')
@@ -607,52 +613,52 @@ class Passband:
                     self.extern_wd_idx = header['wd_idx']
 
                 # Model atmospheres in the passband file:
-                atms = set([entry.split(':')[0] for entry in self.content])
+                stored_atms = set([entry.split(':')[0] for entry in self.content])
 
                 # We have to iterate over available atms rather than stored atms because
                 # the stored atms may not be available in the current version of PHOEBE.
                 available_atms = models.ModelAtmosphere.__subclasses__()
                 for atm in available_atms:
-                    if atm.name not in atms:
+                    if atm.name not in stored_atms:
                         continue
 
                     if atm.external:
                         continue
 
-                    basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name}'].data[name])) for name in atm.basic_axis_names])
+                    basic_axes = tuple(np.asarray(hdul[f'{atm.prefix}_{name}'].data[name]) for name in atm.basic_axis_names)
                     self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
 
                     if f'{atm.name}:Inorm' in self.content:
-                        self.ndp[atm.name].register('inorm@photon', None, hdul[f'{atm.prefix}npgrid'].data)
-                        self.ndp[atm.name].register('inorm@energy', None, hdul[f'{atm.prefix}negrid'].data)
+                        self.ndp[atm.name].register(name='inorm@photon', associated_axes=None, grid=hdul[f'{atm.prefix}npgrid'].data)
+                        self.ndp[atm.name].register(name='inorm@energy', associated_axes=None, grid=hdul[f'{atm.prefix}negrid'].data)
 
                     if f'{atm.name}:Imu' in self.content:
-                        atm_photon_grid = hdul[f'{atm.prefix}FPGRID'].data
-                        atm_energy_grid = hdul[f'{atm.prefix}FEGRID'].data
+                        atm_photon_grid = hdul[f'{atm.prefix}fpgrid'].data
+                        atm_energy_grid = hdul[f'{atm.prefix}fegrid'].data
 
                         # normal passband intensities:
-                        self.ndp[atm.name].register('inorm@photon', None, atm_photon_grid[..., -1, :])
-                        self.ndp[atm.name].register('inorm@energy', None, atm_energy_grid[..., -1, :])
+                        self.ndp[atm.name].register(name='inorm@photon', associated_axes=None, grid=atm_photon_grid[..., -1, :])
+                        self.ndp[atm.name].register(name='inorm@energy', associated_axes=None, grid=atm_energy_grid[..., -1, :])
 
                         # specific passband intensities:
-                        self.ndp[atm.name].register('imu@photon', (atm.mus,), atm_photon_grid)
-                        self.ndp[atm.name].register('imu@energy', (atm.mus,), atm_energy_grid)
+                        self.ndp[atm.name].register(name='imu@photon', associated_axes=(atm.mus,), grid=atm_photon_grid)
+                        self.ndp[atm.name].register(name='imu@energy', associated_axes=(atm.mus,), grid=atm_energy_grid)
 
                     if f'{atm.name}:ld' in self.content:
-                        self.ndp[atm.name].register('ld@photon', None, hdul[f'{atm.prefix}legrid'].data)
-                        self.ndp[atm.name].register('ld@energy', None, hdul[f'{atm.prefix}lpgrid'].data)
+                        self.ndp[atm.name].register(name='ld@photon', associated_axes=None, grid=hdul[f'{atm.prefix}legrid'].data)
+                        self.ndp[atm.name].register(name='ld@energy', associated_axes=None, grid=hdul[f'{atm.prefix}lpgrid'].data)
 
                     if f'{atm.name}:ldint' in self.content:
-                        self.ndp[atm.name].register('ldint@photon', None, hdul[f'{atm.prefix}iegrid'].data)
-                        self.ndp[atm.name].register('ldint@energy', None, hdul[f'{atm.prefix}ipgrid'].data)
+                        self.ndp[atm.name].register(name='ldint@photon', associated_axes=None, grid=hdul[f'{atm.prefix}iegrid'].data)
+                        self.ndp[atm.name].register(name='ldint@energy', associated_axes=None, grid=hdul[f'{atm.prefix}ipgrid'].data)
 
                     if f'{atm.name}:ext' in self.content:
                         # associated axes:
                         ebvs = np.array(list(hdul[f'{atm.prefix}_ebvs'].data['ebvs']))
                         rvs = np.array(list(hdul[f'{atm.prefix}_rvs'].data['rvs']))
 
-                        self.ndp[atm.name].register('ext@photon', (ebvs, rvs), hdul[f'{atm.prefix}XEGRID'].data)
-                        self.ndp[atm.name].register('ext@energy', (ebvs, rvs), hdul[f'{atm.prefix}XPGRID'].data)
+                        self.ndp[atm.name].register(name='ext@photon', associated_axes=(ebvs, rvs), grid=hdul[f'{atm.prefix}xegrid'].data)
+                        self.ndp[atm.name].register(name='ext@energy', associated_axes=(ebvs, rvs), grid=hdul[f'{atm.prefix}xpgrid'].data)
 
         return self
 
@@ -2518,52 +2524,6 @@ def get_passband(passband, content=None, reload=False, update_if_necessary=False
         _pbtable[passband]['pb'] = pb
 
     return _pbtable[passband]['pb']
-
-def Inorm_bol_bb(Teff=5772., logg=4.43, abun=0.0, atm='blackbody', intens_weighting='photon'):
-    r"""
-    Computes normal bolometric intensity using the Stefan-Boltzmann law,
-    Inorm_bol_bb = 1/\pi \sigma T^4. If photon-weighted intensity is
-    requested, Inorm_bol_bb is multiplied by a conversion factor that
-    comes from integrating lambda/hc P(lambda) over all lambda.
-
-    Input parameters mimick the <phoebe.atmospheres.passbands.Passband.Inorm>
-    method for calling convenience.
-
-    Arguments
-    ------------
-    * `Teff` (float/array, optional, default=5772):  value or array of effective
-        temperatures.
-    * `logg` (float/array, optional, default=4.43): IGNORED, for class
-        compatibility only.
-    * `abun` (float/array, optional, default=0.0): IGNORED, for class
-        compatibility only.
-    * `atm` (string, optional, default='blackbody'): atmosphere model, must be
-        `'blackbody'`, otherwise exception is raised.
-    * `intens_weighting`
-
-    Returns
-    ---------
-    * (float/array) float or array (depending on input types) of normal
-        bolometric blackbody intensities.
-
-    Raises
-    --------
-    * ValueError: if `atm` is anything other than `'blackbody'`.
-    """
-
-    if atm != 'blackbody':
-        raise ValueError('atmosphere must be set to blackbody for Inorm_bol_bb.')
-
-    if intens_weighting == 'photon':
-        factor = 2.6814126821264836e22/Teff
-    else:
-        factor = 1.0
-
-    # convert scalars to vectors if necessary:
-    if not hasattr(Teff, '__iter__'):
-        Teff = np.array((Teff,))
-
-    return factor * sigma_sb.value * Teff**4 / np.pi
 
 
 if __name__ == '__main__':

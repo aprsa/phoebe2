@@ -10950,6 +10950,7 @@ class Bundle(ParameterSet):
             if system is not None:
                 system.reset(force_recompute_instantaneous=True)
             
+            # print(f'{pblums_abs=} {pblums_scale=} {pblums_rel=} {pbfluxes=}')
             return system, pblums_abs, pblums_scale, pblums_rel, pbfluxes
 
         # users will see the twig dictionaries with the exposed values based on

@@ -4,6 +4,7 @@ from scipy.special import sph_harm as Y
 from math import sqrt, sin, cos, acos, atan2, trunc, pi
 import sys, os
 import copy
+from astropy.constants import sigma_sb
 
 from phoebe.atmospheres import models, passbands
 from phoebe.distortions import roche, rotstar
@@ -335,11 +336,9 @@ class System(object):
         logger.debug("reflection: computing bolometric intensities")
         fluxes_intrins_per_body = []
         for starref, body in self.items():
-            if body.mesh is None: continue
-            abs_normal_intensities = passbands.Inorm_bol_bb(Teff=body.mesh.teffs.for_computations,
-                                                            atm='blackbody',
-                                                            intens_weighting='energy')
-
+            if body.mesh is None:
+                continue
+            abs_normal_intensities = sigma_sb * body.mesh.teffs.for_computations**4 / np.pi  # bolometric intensities
             fluxes_intrins_per_body.append(abs_normal_intensities * np.pi)
 
         fluxes_intrins_flat = meshes.pack_column_flat(fluxes_intrins_per_body)
@@ -356,48 +355,47 @@ class System(object):
             normals_per_body = list(meshes.get_column('vnormals').values())
             areas_per_body = list(meshes.get_column('areas').values())
             irrad_frac_refl_per_body = list(meshes.get_column('irrad_frac_refl', computed_type='for_computations').values())
-            teffs_intrins_per_body = list(meshes.get_column('teffs', computed_type='for_computations').values())
 
             ld_func_and_coeffs = [tuple([_bytes(body.ld_func['bol'])] + [np.asarray(body.ld_coeffs['bol'])]) for body in self.bodies]
             logger.debug("irradiation ld_func_and_coeffs: {}".format(ld_func_and_coeffs))
-            fluxes_intrins_and_refl_per_body = libphoebe.mesh_radiosity_problem_nbody_convex(vertices_per_body,
-                                                                                       triangles_per_body,
-                                                                                       normals_per_body,
-                                                                                       areas_per_body,
-                                                                                       irrad_frac_refl_per_body,
-                                                                                       fluxes_intrins_per_body,
-                                                                                       ld_func_and_coeffs,
-                                                                                       _bytes(self.irrad_method.title()),
-                                                                                       support=_bytes('vertices')
-                                                                                       )
+            fluxes_intrins_and_refl_per_body = libphoebe.mesh_radiosity_problem_nbody_convex(
+                vertices_per_body,
+                triangles_per_body,
+                normals_per_body,
+                areas_per_body,
+                irrad_frac_refl_per_body,
+                fluxes_intrins_per_body,
+                ld_func_and_coeffs,
+                _bytes(self.irrad_method.title()),
+                support=_bytes('vertices')
+            )
 
             fluxes_intrins_and_refl_flat = meshes.pack_column_flat(fluxes_intrins_and_refl_per_body)
 
         else:
             logger.debug("handling reflection (general case), method='{}'".format(self.irrad_method))
 
-            vertices_flat = meshes.get_column_flat('vertices') # np.ndarray
-            triangles_flat = meshes.get_column_flat('triangles') # np.ndarray
-            normals_flat = meshes.get_column_flat('vnormals') # np.ndarray
-            areas_flat = meshes.get_column_flat('areas') # np.ndarray
+            vertices_flat = meshes.get_column_flat('vertices')  # np.ndarray
+            triangles_flat = meshes.get_column_flat('triangles')  # np.ndarray
+            normals_flat = meshes.get_column_flat('vnormals')  # np.ndarray
+            areas_flat = meshes.get_column_flat('areas')  # np.ndarray
             irrad_frac_refl_flat = meshes.get_column_flat('irrad_frac_refl', computed_type='for_computations') # np.ndarray
 
             ld_func_and_coeffs = [tuple([_bytes(body.ld_func['bol'])] + [np.asarray(body.ld_coeffs['bol'])]) for body in self.mesh_bodies] # list
             ld_inds_flat = meshes.pack_column_flat({body.comp_no: np.full(fluxes.shape, body.comp_no-1) for body, fluxes in zip(self.mesh_bodies, fluxes_intrins_per_body)}) # np.ndarray
 
-            fluxes_intrins_and_refl_flat = libphoebe.mesh_radiosity_problem(vertices_flat,
-                                                                            triangles_flat,
-                                                                            normals_flat,
-                                                                            areas_flat,
-                                                                            irrad_frac_refl_flat,
-                                                                            fluxes_intrins_flat,
-                                                                            ld_func_and_coeffs,
-                                                                            ld_inds_flat,
-                                                                            _bytes(self.irrad_method.title()),
-                                                                            support=_bytes('vertices')
-                                                                            )
-
-
+            fluxes_intrins_and_refl_flat = libphoebe.mesh_radiosity_problem(
+                vertices_flat,
+                triangles_flat,
+                normals_flat,
+                areas_flat,
+                irrad_frac_refl_flat,
+                fluxes_intrins_flat,
+                ld_func_and_coeffs,
+                ld_inds_flat,
+                _bytes(self.irrad_method.title()),
+                support=_bytes('vertices')
+            )
 
         teffs_intrins_flat = meshes.get_column_flat('teffs', computed_type='for_computations')
 
@@ -1896,6 +1894,15 @@ class Star(Body):
                 ld_extrapolation_method=ld_extrapolation_method,
                 blending_method=blending_method
             )
+
+            # print(f'universe: {pb.pbname=}')
+            # print(f'universe: {atm_model=}')
+            # print(f'universe: {ldatm_model=}')
+            # print(f'universe: {extinct=}')
+            # print(f'universe: {ignore_effects=}')
+            # print(f'universe: {query_table=}')
+            # print(f'universe: {query_pts.shape=}')
+            # print(f'universe: {abs_intensities=}')
 
             # Beaming/boosting
             if boosting_method == 'none' or ignore_effects:
