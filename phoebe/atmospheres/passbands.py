@@ -572,8 +572,9 @@ class Passband:
                         # store axes:
                         hdul['bb_teffs'] = fits.table_to_hdu(Table({'teffs': ndp.axes[0]}, meta={'extname': 'bb_teffs'}))
                         if 'blackbody:ext' in self.content:
-                            hdul['bb_ebvs'] = fits.table_to_hdu(Table({'ebvs': ndp.axes[1]}, meta={'extname': 'bb_ebvs'}))
-                            hdul['bb_rvs'] = fits.table_to_hdu(Table({'rvs': ndp.axes[2]}, meta={'extname': 'bb_rvs'}))
+                            associated_axes = ndp.table['ext@photon']['associated_axes']
+                            hdul['bb_ebvs'] = fits.table_to_hdu(Table({'ebvs': associated_axes[0]}, meta={'extname': 'bb_ebvs'}))
+                            hdul['bb_rvs'] = fits.table_to_hdu(Table({'rvs': associated_axes[1]}, meta={'extname': 'bb_rvs'}))
 
                         # store tables:
                         hdul.append(fits.ImageHDU(self.ndp['blackbody'].table['inorm@energy']['grid'], name='bbnegrid'))
@@ -625,7 +626,8 @@ class Passband:
                     if atm.external:
                         continue
 
-                    basic_axes = tuple(np.asarray(hdul[f'{atm.prefix}_{name}'].data[name]) for name in atm.basic_axis_names)
+                    basic_axes = tuple([np.array(list(hdul[f'{atm.prefix}_{name}'].data[name])) for name in atm.basic_axis_names])
+                    # basic_axes = tuple(np.asarray(hdul[f'{atm.prefix}_{name}'].data[name]) for name in atm.basic_axis_names)
                     self.ndp[atm.name] = ndpolator.Ndpolator(basic_axes=basic_axes)
 
                     if f'{atm.name}:Inorm' in self.content:

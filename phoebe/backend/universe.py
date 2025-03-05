@@ -338,7 +338,7 @@ class System(object):
         for starref, body in self.items():
             if body.mesh is None:
                 continue
-            abs_normal_intensities = sigma_sb * body.mesh.teffs.for_computations**4 / np.pi  # bolometric intensities
+            abs_normal_intensities = sigma_sb.value * body.mesh.teffs.for_computations**4 / np.pi  # bolometric intensities
             fluxes_intrins_per_body.append(abs_normal_intensities * np.pi)
 
         fluxes_intrins_flat = meshes.pack_column_flat(fluxes_intrins_per_body)
