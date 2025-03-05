@@ -565,6 +565,7 @@ class Passband:
                             include_mus=False,
                             include_ld=False,
                             include_extinction='blackbody:ext' in self.content,
+                            add_history_entry=False,
                             verbose=False
                         )
                         ndp = self.ndp['blackbody']  # initialized by compute_intensities()
@@ -738,7 +739,7 @@ class Passband:
         else:
             raise NotImplementedError(f'ld_func={ld_func} is not supported.')
 
-    def compute_intensities(self, atm, include_mus=True, include_ld=True, include_extinction=False, rvs=None, ebvs=None, verbose=True):
+    def compute_intensities(self, atm, include_mus=True, include_ld=True, include_extinction=False, rvs=None, ebvs=None, add_history_entry=True, verbose=True):
         """
         Computes direction-dependent passband intensities using the passed `atm`
         model atmospheres.
@@ -763,6 +764,8 @@ class Passband:
           used.
         * `ebvs` (array, optional, default=None): a custom array of color excess
           E(B-V) values. If None, the default linspace(0, 3, 30) is used.
+        * `add_history_entry` (bool, optional, default=True): set to True to add
+            a history entry to the passband file.
         * `verbose` (bool, optional, default=True): set to True to display
             progress in the terminal.
 
@@ -857,7 +860,9 @@ class Passband:
             if f'{atm.name}:Inorm' not in self.content:
                 self.content.append(f'{atm.name}:Inorm')
 
-            self.add_to_history(f"{atm.name} intensities {'with' if include_extinction else 'w/o'} extinction added.")
+            if add_history_entry:
+                self.add_to_history(f"{atm.name} intensities {'with' if include_extinction else 'w/o'} extinction added.")
+
             return
 
         for i, model in tqdm(enumerate(atm.models), desc=atm.name, total=atm.nmodels, disable=not verbose, unit=' models'):
@@ -908,7 +913,8 @@ class Passband:
             if f'{atm.name}:ext' not in self.content:
                 self.content.append(f'{atm.name}:ext')
 
-        self.add_to_history(f"{atm.name} intensities {'with' if include_extinction else 'w/o'} extinction added.")
+        if add_history_entry:
+            self.add_to_history(f"{atm.name} intensities {'with' if include_extinction else 'w/o'} extinction added.")
 
         if include_ld:
             if verbose:
@@ -955,13 +961,17 @@ class Passband:
             self.ndp[atm.name].register('ld@energy', None, ld_energy_grid)
             if f'{atm.name}:ld' not in self.content:
                 self.content.append(f'{atm.name}:ld')
-            self.add_to_history(f'LD coefficients for {atm.name} added.')
+            
+            if add_history_entry:
+                self.add_to_history(f'LD coefficients for {atm.name} added.')
 
             self.ndp[atm.name].register('ldint@photon', None, ldint_photon_grid)
             self.ndp[atm.name].register('ldint@energy', None, ldint_energy_grid)
             if f'{atm.name}:ldint' not in self.content:
                 self.content.append(f'{atm.name}:ldint')
-            self.add_to_history(f'LD integrals for {atm.name} added.')
+
+            if add_history_entry:
+                self.add_to_history(f'LD integrals for {atm.name} added.')
 
     def interpolate_ldcoeffs(self, query_table, ldatm=models.CK2004ModelAtmosphere, ld_func='power', intens_weighting='photon', ld_extrapolation_method='none'):
         """
