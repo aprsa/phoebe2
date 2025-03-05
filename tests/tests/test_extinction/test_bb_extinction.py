@@ -69,8 +69,6 @@ def test_frontend():
     b['ebv'] = 0.3
     b.run_compute(model='lc_ext', irrad_method='none')
 
-    print(b['value@fluxes@lc_ext'])
-
     assert np.mean(b['value@fluxes@lc_ext']/b['value@fluxes@lc_no_ext'])-0.785 < 1e-3
 
     phoebe.uninstall_passband('box:test')
