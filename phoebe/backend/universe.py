@@ -1895,15 +1895,6 @@ class Star(Body):
                 blending_method=blending_method
             )
 
-            # print(f'universe: {pb.pbname=}')
-            # print(f'universe: {atm_model=}')
-            # print(f'universe: {ldatm_model=}')
-            # print(f'universe: {extinct=}')
-            # print(f'universe: {ignore_effects=}')
-            # print(f'universe: {query_table=}')
-            # print(f'universe: {query_pts.shape=}')
-            # print(f'universe: {abs_intensities=}')
-
             # Beaming/boosting
             if boosting_method == 'none' or ignore_effects:
                 boost_factors = 1.0
