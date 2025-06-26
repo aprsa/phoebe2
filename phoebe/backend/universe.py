@@ -290,7 +290,7 @@ class System(object):
         self.ys = np.array(_value(ys))
         self.zs = np.array(_value(zs))
 
-        for starref,body in self.items():
+        for starref, body in self.items():
             body.update_position(time, xs, ys, zs, vxs, vys, vzs,
                                  ethetas, elongans, eincls,
                                  ds=ds, Fs=Fs, ignore_effects=ignore_effects)
@@ -989,7 +989,6 @@ class Body(object):
             scaledprotomesh = self.get_standard_mesh(scaled=True)
             # TODO: can we avoid an extra copy here?
 
-
         if not ignore_effects and len(self.features):
             logger.debug("{}.update_position: processing features at t={}".format(self.component, self.time))
             # First allow features to edit the coords_for_computations (pvertices).
@@ -999,14 +998,16 @@ class Body(object):
             # perturbed as well, unless there is a good reason not to.
             for feature in self.features:
                 # NOTE: these are ALWAYS done on the protomesh
-                coords_for_observations = feature.process_coords_for_computations(scaledprotomesh.coords_for_computations, s=self.polar_direction_xyz, t=self.time)
+                coords_for_computations = feature.process_coords_for_computations(scaledprotomesh.coords_for_computations, s=self.polar_direction_xyz, t=self.time)
                 if scaledprotomesh._compute_at_vertices:
-                    scaledprotomesh.update_columns(pvertices=coords_for_observations)
-
+                    scaledprotomesh.update_columns(pvertices=coords_for_computations)
+                    pargs = self.instantaneous_mesh_args
+                    # print(f'{pargs=}, {scaledprotomesh.pvertices.shape=}')
+                    # print(f'{type(scaledprotomesh.pvertices)=}, {type("rotstar")=}, {type(pargs)=}')
+                    # libphoebe.update_vnormgrads(scaledprotomesh.pvertices, 'rotstar', pargs)
                 else:
-                    scaledprotomesh.update_columns(centers=coords_for_observations)
+                    scaledprotomesh.update_columns(centers=coords_for_computations)
                     raise NotImplementedError("areas are not updated for changed mesh")
-
 
             for feature in self.features:
                 coords_for_observations = feature.process_coords_for_observations(scaledprotomesh.coords_for_computations, scaledprotomesh.coords_for_observations, s=self.polar_direction_xyz, t=self.time)
@@ -1568,7 +1569,6 @@ class Star(Body):
             theta = 0.0
             self._standard_meshes[theta].update_columns(gravs=gravs)
 
-
     def _fill_teffs(self, mesh=None, ignore_effects=False, **kwargs):
         r"""
 
@@ -1752,7 +1752,6 @@ class Star(Body):
         cols = lc_cols
         cols['rvs'] = rvs
         return cols
-
 
     def _populate_lc(self, dataset, ignore_effects=False, **kwargs):
         """
@@ -2451,6 +2450,10 @@ class Star_rotstar(Star):
         """
         whether the star needs to be re-meshed (for any reason)
         """
+        for feature in self.features:
+            if feature._remeshing_required:
+                return True
+
         return self.is_misaligned
 
     @property
@@ -3316,12 +3319,12 @@ class Pulsation(Feature):
         new_phi = phi + xi_p.real
 
         new_coords = np.zeros(coords_for_computations.shape)
-        #~ new_coords[:,0] = coords_for_observations[:,0] + xi_r.real * np.sin(theta + xi_t.real) * np.sin(phi + xi_p.real)
-        #~ new_coords[:,1] = coords_for_observations[:,1] + xi_r.real * np.sin(theta + xi_t.real) * np.cos(phi + xi_p.real)
-        #~ new_coords[:,2] = coords_for_observations[:,2] + xi_r.real * np.cos(theta + xi_t.real)
         new_coords[:,0] = new_r * np.sin(new_theta) * np.sin(new_phi)
         new_coords[:,1] = new_r * np.sin(new_theta) * np.cos(new_phi)
         new_coords[:,2] = new_r * np.cos(new_theta)
+
+        self.before = r
+        self.after = np.sqrt((new_coords**2).sum(axis=1))
 
         return new_coords
 
@@ -3378,6 +3381,8 @@ class Pulsation(Feature):
         """
         """
         if not self._teffext:
+            # TODO: this is just a test hack; we need proper handling of vgradnorms
+            teffs *= self.before**2/self.after**2
             return teffs
 
         raise NotImplementedError("teffext=True not yet supported for pulsations")

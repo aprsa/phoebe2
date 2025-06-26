@@ -6635,6 +6635,126 @@ static PyObject *mesh_properties([[maybe_unused]] PyObject *self, PyObject *args
 /*
   C++ wrapper for Python code:
 
+  Compute the norm of the gradient of the potential at each vertex for various potentials.
+
+  Python:
+
+    vnormgrads = update_vnormgrads(V, potential_type, potential_params)
+
+  where parameters
+
+    V[][3]: 2-rank numpy array of vertices
+    potential_type: string, e.g. "rotstar", "roche", "rotstar_misaligned", "sphere"
+    potential_params: tuple/list of floats, parameters for the potential
+
+  Returns:
+
+    vnormgrads: 1-rank numpy array of norms of the gradients at vertices
+*/
+
+static PyObject *update_vnormgrads([[maybe_unused]] PyObject *self, PyObject *args, PyObject *keywds) {
+    auto fname = "update_vnormgrads"_s;
+
+    char *kwlist[] = {
+        (char *) "V",
+        (char *) "potential_type",
+        (char *) "potential_params",
+        NULL
+    };
+
+    PyArrayObject *oV;
+    PyObject *o_potential_type;
+    PyObject *o_potential_params;
+
+    if (!PyArg_ParseTupleAndKeywords(
+            args, keywds, "O!O!O!", kwlist,
+            &PyArray_Type, &oV,
+            &PyString_Type, &o_potential_type,
+            &PyTuple_Type, &o_potential_params)) {
+        raise_exception(fname + "::Problem reading arguments");
+        return NULL;
+    }
+
+    std::string potential_type = PyString_AsString(o_potential_type);
+
+    std::vector<T3Dpoint<double>> V;
+    PyArray_To3DPointVector(oV, V);
+
+    std::vector<double> vnormgrads(V.size());
+
+    // --- ROTSTAR ---
+    if (potential_type == "rotstar") {
+        if (PyTuple_Size(o_potential_params) < 1) {
+            raise_exception(fname + "::rotstar requires omega parameter");
+            return NULL;
+        }
+        double omega = PyFloat_AsDouble(PyTuple_GetItem(o_potential_params, 0));
+        double params[2] = {omega, 0.0};
+        Trot_star<double> rotstar(params);
+        double grad[3];
+        for (size_t i = 0; i < V.size(); i++) {
+            rotstar.grad_only(V[i].data, grad);
+            vnormgrads[i] = std::sqrt(grad[0]*grad[0] + grad[1]*grad[1] + grad[2]*grad[2]);
+        }
+    }
+    // --- ROCHE ---
+    else if (potential_type == "roche") {
+        if (PyTuple_Size(o_potential_params) < 3) {
+            raise_exception(fname + "::roche requires q, F, d parameters");
+            return NULL;
+        }
+        double q = PyFloat_AsDouble(PyTuple_GetItem(o_potential_params, 0));
+        double F = PyFloat_AsDouble(PyTuple_GetItem(o_potential_params, 1));
+        double d = PyFloat_AsDouble(PyTuple_GetItem(o_potential_params, 2));
+        double params[4] = {q, F, d, 0.0};
+        Tgen_roche<double> roche(params);
+        double grad[3];
+        for (size_t i = 0; i < V.size(); ++i) {
+            roche.grad_only(V[i].data, grad);
+            vnormgrads[i] = std::sqrt(grad[0]*grad[0] + grad[1]*grad[1] + grad[2]*grad[2]);
+        }
+    }
+    // --- ROTSTAR_MISALIGNED ---
+    else if (potential_type == "rotstar_misaligned") {
+        if (PyTuple_Size(o_potential_params) < 4) {
+            raise_exception(fname + "::rotstar_misaligned requires omega, sx, sy, sz parameters");
+            return NULL;
+        }
+        double omega = PyFloat_AsDouble(PyTuple_GetItem(o_potential_params, 0));
+        double sx = PyFloat_AsDouble(PyTuple_GetItem(o_potential_params, 1));
+        double sy = PyFloat_AsDouble(PyTuple_GetItem(o_potential_params, 2));
+        double sz = PyFloat_AsDouble(PyTuple_GetItem(o_potential_params, 3));
+        double params[5] = {omega, sx, sy, sz, 0.0};
+        Tmisaligned_rot_star<double> rotstar(params);
+        double grad[3];
+        for (size_t i = 0; i < V.size(); ++i) {
+            rotstar.grad_only(V[i].data, grad);
+            vnormgrads[i] = std::sqrt(grad[0]*grad[0] + grad[1]*grad[1] + grad[2]*grad[2]);
+        }
+    }
+    // --- SPHERE ---
+    else if (potential_type == "sphere") {
+        // No parameters needed
+        double grad[3];
+        for (size_t i = 0; i < V.size(); ++i) {
+            double *x = V[i].data;
+            double R = utils::hypot3(x);
+            double F = 1/(R*R*R);
+            for (int j = 0; j < 3; ++j) grad[j] = F*x[j];
+            vnormgrads[i] = std::sqrt(grad[0]*grad[0] + grad[1]*grad[1] + grad[2]*grad[2]);
+        }
+    }
+    else {
+        raise_exception(fname + "::Unknown potential_type: " + potential_type);
+        return NULL;
+    }
+
+    return PyArray_FromVector(vnormgrads);
+}
+
+/*
+  C++ wrapper for Python code:
+
   Export the mesh into povray file.
 
   Python:
@@ -11813,6 +11933,11 @@ static PyMethodDef Methods[] = {
     METH_VARARGS|METH_KEYWORDS,
     "Determine the ratio of triangle surfaces that are visible "
     "in a triangular mesh."},
+
+  { "update_vnormgrads",
+    O2F update_vnormgrads,
+    METH_VARARGS|METH_KEYWORDS,
+    "Compute the norm of the gradient of the potential at each vertex for a given potential."},
 
   { "mesh_rough_visibility",
     mesh_rough_visibility,
