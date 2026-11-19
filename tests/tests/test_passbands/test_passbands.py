@@ -43,32 +43,36 @@ def test_load():
     os.remove(os.path.join(path, 'test.fits'))
 
 
-def test_skip_pre25(tmp_path, capsys):
+def test_skip_obsolete(tmp_path, capsys):
     pb = phoebe.atmospheres.passbands.Passband(
         ptf=os.path.join(path, 'test.ptf'),
         pbset='test',
-        pbname='pre25',
+        pbname='obsolete',
         wlunits=u.nm,
         calibrated=True,
-        reference='test skipping pre-2.5 passbands on initialization',
+        reference='test skipping obsolete passbands on initialization',
         version=1.0
     )
     pb.compute_intensities(atm=models.BlackbodyModelAtmosphere(), include_mus=False, include_ld=False)
 
-    # _init_passband identifies pre-2.5 files by their PHOEBEVN header:
-    archive = os.path.join(tmp_path, 'test_pre25.fits')
+    # _init_passband identifies obsolete files by their PHOEBEVN header; files
+    # created before 2.6 (pre-2.5 format or the old phoenix grid) are skipped:
+    archive = os.path.join(tmp_path, 'test_obsolete.fits')
     pb.save(archive)
-    fits.setval(archive, 'PHOEBEVN', value='2.4.17')
-
-    # pre-2.5 files must be skipped rather than registered (and later fail to load):
+    fits.setval(archive, 'PHOEBEVN', value='2.5.5')
     phoebe.atmospheres.passbands._init_passband(archive)
-    assert 'test:pre25' not in phoebe.atmospheres.passbands._pbtable
+    assert 'test:obsolete' not in phoebe.atmospheres.passbands._pbtable
     assert 'not available from the server' in capsys.readouterr().out
 
+    # 2.6 development versions are current:
+    fits.setval(archive, 'PHOEBEVN', value='2.6.0.dev0')
+    phoebe.atmospheres.passbands._init_passband(archive)
+    assert 'test:obsolete' in phoebe.atmospheres.passbands._pbtable
+    phoebe.atmospheres.passbands._pbtable.pop('test:obsolete')
 
 if __name__ == '__main__':
     atm_path = os.path.join(path, 'tables')
     atm_tables_available = os.path.exists(atm_path)
     test_compute(atm_tables_available=atm_tables_available, atm_path=atm_path)
     test_load()
-    test_skip_pre25()
+    test_skip_obsolete()

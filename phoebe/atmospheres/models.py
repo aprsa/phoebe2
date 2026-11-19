@@ -417,36 +417,32 @@ class CK2004ModelAtmosphere(ModelAtmosphere):
 
 class PhoenixModelAtmosphere(ModelAtmosphere):
     """
-    Phoenix (Husser et al. 2012) model atmosphere.
+    Phoenix (Husser et al. 2013) model atmosphere, v3.0 specific intensity
+    grid.
 
     The Phoenix model atmosphere is a grid of model atmospheres computed by
-    Husser et al. (2012). The grid is defined by effective temperature (teff),
-    surface gravity (logg), and chemical abundance (abun). The intensities are
-    computed for 37 angles between 500 and 26000 Angstroms.
+    Husser et al. (2013); PHOEBE uses the v3.0 release of their specific
+    intensity grid. The grid is defined by effective temperature (teff,
+    2300-15000 K), surface gravity (logg, -0.5 to 6.5), and chemical abundance
+    (abun, -4 to +1). The intensities are given for 37 angles between 500 and
+    55000A. They have been mapped onto the PHOEBE mu grid with the impact
+    parameter preserved and mu=0 at the inflection point of the limb, and
+    scaled so that the disk-integrated bolometric flux equals sigma T^4.
     """
 
     name = 'phoenix'
     prefix = 'ph'
 
-    teffs = np.array([
-        2300.,  2400.,  2500.,  2600.,  2700.,  2800.,  2900.,  3000.,
-        3100.,  3200.,  3300.,  3400.,  3500.,  3600.,  3700.,  3800.,
-        3900.,  4000.,  4100.,  4200.,  4300.,  4400.,  4500.,  4600.,
-        4700.,  4800.,  4900.,  5000.,  5100.,  5200.,  5300.,  5400.,
-        5500.,  5600.,  5700.,  5800.,  5900.,  6000.,  6100.,  6200.,
-        6300.,  6400.,  6500.,  6600.,  6700.,  6800.,  6900.,  7000.,
-        7200.,  7400.,  7600.,  7800.,  8000.,  8200.,  8400.,  8600.,
-        8800.,  9000.,  9200.,  9400.,  9600.,  9800., 10000., 10200.,
-       10400., 10600., 10800., 11000., 11200., 11400., 11600., 11800.,
-       12000.
+    teffs = np.concatenate([
+        np.arange(2300., 7000.1, 100.),
+        np.arange(7200., 12000.1, 200.),
+        np.arange(12500., 15000.1, 500.)
     ])
 
-    loggs = np.array([
-        0., 0.5, 1., 1.5, 2., 2.5, 3., 3.5, 4., 4.5, 5., 5.5, 6.
-    ])
+    loggs = np.arange(-0.5, 6.51, 0.5)
 
     abuns = np.array([
-        -4., -3., -2., -1.5, -1., -0.5,  0.,  0.5,  1.
+        -4., -3., -2.5, -2., -1.5, -1., -0.5,  0.,  0.5,  1.
     ])
 
     basic_axes = {
@@ -460,15 +456,20 @@ class PhoenixModelAtmosphere(ModelAtmosphere):
         0.045, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
         0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.
     ])
-    wls = np.arange(500., 26000.)/1e10  # AA -> m
+    wls = np.arange(500., 55000.)/1e10  # AA -> m
     units = 1  # W/m^3
 
     def parse_rules(self, relative_filename):
-        return [
-            float(relative_filename[1:6]),  # teff
-            float(relative_filename[7:11]),  # logg
-            float(relative_filename[12:16])  # abun
-        ]
+        # filenames are T{teff:05d}L{logg:.2f}A{abun:+.1f}.fits; logg can be negative:
+        m = re.match(r'T(\d{5})L(-?\d+\.\d+)A([-+]\d+\.\d+)', relative_filename)
+        if m is None:
+            raise ValueError(f'cannot parse phoenix filename {relative_filename}')
+        return [float(m[1]), float(m[2]), float(m[3])]
+
+    def limb_treatment(self, intensities):
+        # the tables already define the limb: mu=0 is the inflection point of
+        # the limb profile, so the tabulated intensities are used as they are.
+        return intensities
 
 
 class TremblayModelAtmosphere(ModelAtmosphere):

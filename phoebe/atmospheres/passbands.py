@@ -22,7 +22,7 @@ except ImportError:
     from numpy import trapz as np_trapz
 from scipy import interpolate, integrate
 from scipy.optimize import least_squares
-from packaging.version import parse
+from packaging.version import parse, InvalidVersion
 from datetime import datetime
 import libphoebe
 import os
@@ -51,8 +51,12 @@ _url_tables_server = os.getenv('PHOEBE_TABLES_SERVER', 'https://tables.phoebe-pr
 # at some point.
 _pbtable = {}
 
-# Pre-2.5 passband files skipped on initialization, keyed by passband, so that
-# downloading the 2.5 version can replace them:
+# Passband files created before the 2.6 version are obsolete: pre-2.5
+# files cannot be loaded and 2.5 files carry the old phoenix grid:
+_pb_min_version = (2, 6)
+
+# Obsolete passband files skipped on initialization, keyed by passband, so that
+# downloading the current version can replace them:
 _pbtable_obsolete = {}
 
 _initialized = False
@@ -510,7 +514,7 @@ class Passband:
 
         self.add_to_history('passband transmission function updated.')
 
-    def save(self, archive, overwrite=True, update_timestamp=True, export_to_pre25=False):
+    def save(self, archive, overwrite=True, update_timestamp=True):
         """
         Saves the passband file in the fits format.
 
@@ -521,21 +525,13 @@ class Passband:
             existing file with the same filename as provided in `archive`
         * `update_timestamp` (bool, optional, default=True): whether to update
             the stored timestamp with the current time.
-        * `export_to_pre25` (bool, optional, default=False): whether to export
-            the passband file to a pre-2.5 format. This includes renaming the
-            columns in the tables to match the old passband files, exporting
-            Inorm tables for model atmospheres, exporting blackbody functions
-            and exporting legacy comments.
         """
 
         # Timestamp is used for passband versioning.
         timestamp = time.ctime() if update_timestamp else self.timestamp
 
         header = fits.Header()
-        if export_to_pre25:
-            header['PHOEBEVN'] = '2.4.17'
-        else:
-            header['PHOEBEVN'] = phoebe_version
+        header['PHOEBEVN'] = phoebe_version
         header['TIMESTMP'] = timestamp
         header['PBSET'] = self.pbset
         header['PBNAME'] = self.pbname
@@ -548,18 +544,12 @@ class Passband:
         header['PTFEAREA'] = self.ptf_area
         header['PTFPAREA'] = self.ptf_photon_area
 
-        if export_to_pre25:
-            header['COMMENTS'] = ''
-
         # We build content from scratch to avoid any potential issues with unsupported tables:
         content = []
 
         # Add history entries:
-        if export_to_pre25:
-            header['history'] = '-END-'.join(self.history) + '-END-'
-        else:
-            for entry in self.history:
-                header['history'] = entry
+        for entry in self.history:
+            header['history'] = entry
 
         # Add comments:
         for comment in self.comments:
@@ -586,29 +576,20 @@ class Passband:
                 basic_axes = self.ndp[atm.name].axes
 
                 for name, axis in zip(atm.basic_axis_names, basic_axes):
-                    if export_to_pre25:
-                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
-                    else:
-                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
             if f'{atm.name}:Imu' in self.content:
                 basic_axes = self.ndp[atm.name].axes
                 associated_axes = self.ndp[atm.name].table['imu@photon']['associated_axes']
 
                 for name, axis in zip(atm.basic_axis_names + ['mus'], basic_axes + associated_axes):
-                    if export_to_pre25:
-                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
-                    else:
-                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
             if f'{atm.name}:ext' in self.content:
                 associated_axes = self.ndp[atm.name].table['ext@photon']['associated_axes']
 
                 for name, axis in zip(['ebvs', 'rvs'], associated_axes):
-                    if export_to_pre25:
-                        data.append(fits.table_to_hdu(Table({name[:-1]: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
-                    else:
-                        data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
+                    data.append(fits.table_to_hdu(Table({name: axis}, meta={'extname': f'{atm.prefix}_{name}'})))
 
         # grids:
         for atm in models._atmtable.values():
@@ -616,18 +597,8 @@ class Passband:
                 continue
 
             if f'{atm.name}:Inorm' in self.content:
-                if export_to_pre25 and atm.name == 'blackbody':
-                    teffs = self.ndp['blackbody'].axes[0]
-                    log10ints = self.ndp['blackbody'].table['inorm@energy']['grid']
-                    bb_func_energy = interpolate.splrep(teffs, log10ints, s=0)
-                    log10ints = self.ndp['blackbody'].table['inorm@photon']['grid']
-                    bb_func_photon = interpolate.splrep(teffs, log10ints, s=0)
-
-                    bb_func = Table({'teff': bb_func_energy[0], 'logi_e': bb_func_energy[1], 'logi_p': bb_func_photon[1]}, meta={'extname': 'BB_FUNC'})
-                    data.append(fits.table_to_hdu(bb_func))
-                else:
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy']['grid'], name=f'{atm.prefix}negrid'))
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon']['grid'], name=f'{atm.prefix}npgrid'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@energy']['grid'], name=f'{atm.prefix}negrid'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['inorm@photon']['grid'], name=f'{atm.prefix}npgrid'))
 
                 content.append(f'{atm.name}:Inorm')
 
@@ -635,11 +606,6 @@ class Passband:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy']['grid'], name=f'{atm.prefix.upper()}FEGRID'))
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon']['grid'], name=f'{atm.prefix.upper()}FPGRID'))
                 content.append(f'{atm.name}:Imu')
-
-                if export_to_pre25 and f'{atm.name}:Inorm' not in content:
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@energy']['grid'][..., -1, :], name=f'{atm.prefix.upper()}NEGRID'))
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['imu@photon']['grid'][..., -1, :], name=f'{atm.prefix.upper()}NPGRID'))
-                    content.append(f'{atm.name}:Inorm')
 
             if f'{atm.name}:ld' in self.content:
                 data.append(fits.ImageHDU(self.ndp[atm.name].table['ld@energy']['grid'], name=f'{atm.prefix.upper()}LEGRID'))
@@ -652,12 +618,8 @@ class Passband:
                 content.append(f'{atm.name}:ldint')
 
             if f'{atm.name}:ext' in self.content:
-                if export_to_pre25 and atm.name == 'blackbody':
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy']['grid'], name=f'{atm.prefix.upper()}EGRID'))
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon']['grid'], name=f'{atm.prefix.upper()}PGRID'))
-                else:
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy']['grid'], name=f'{atm.prefix.upper()}XEGRID'))
-                    data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon']['grid'], name=f'{atm.prefix.upper()}XPGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@energy']['grid'], name=f'{atm.prefix.upper()}XEGRID'))
+                data.append(fits.ImageHDU(self.ndp[atm.name].table['ext@photon']['grid'], name=f'{atm.prefix.upper()}XPGRID'))
                 content.append(f'{atm.name}:ext')
 
         # All saved content has been syndicated to the content list:
@@ -1859,15 +1821,20 @@ def _init_passband(fullpath, check_for_update=True):
     global _pbtable
     logger.info("initializing passband (headers only) at {}".format(fullpath))
 
-    # pre-2.5 passband files cannot be loaded by 2.5+, so skip them loudly:
+    # passband files created before 2.6 are obsolete (pre-2.5
+    # files cannot be loaded, 2.5 files carry the old phoenix grid)
     header = fits.getheader(fullpath)
     pb_version = str(header.get('phoebevn', '0'))
-    if parse(pb_version) < parse('2.5'):
+    try:
+        obsolete = parse(pb_version).release[:2] < _pb_min_version
+    except InvalidVersion:
+        obsolete = True
+    if obsolete:
         passband = f"{header['pbset']}:{header['pbname']}"
         msg = f"PHOEBE: skipping {fullpath}: it is an obsolete passband file (created by PHOEBE {pb_version})."
         if passband in list_online_passbands(repeat_errors=False):
             _pbtable_obsolete[passband] = fullpath
-            msg += f" Run phoebe.update_passband('{passband}') to replace it with the 2.5 version from the server."
+            msg += f" Run phoebe.update_passband('{passband}') to replace it with the {'.'.join(map(str, _pb_min_version))} version from the server."
         else:
             msg += f" The {passband} passband is not available from the server, so it cannot be updated."
         print(msg)
@@ -2143,10 +2110,10 @@ def download_passband(passband, content=None, local=True, gzipped=None):
         raise IOError("unable to download {} passband - check connection.  Original error: {}".format(passband, e))
     else:
         # remove the obsolete file that this download supersedes, if any:
-        fname_pre25 = _pbtable_obsolete.pop(passband, None)
-        if fname_pre25 is not None and fname_pre25 != passband_fname_local and os.path.dirname(fname_pre25) == os.path.dirname(pbdir):
-            logger.warning("deleting obsolete passband file: {}".format(fname_pre25))
-            os.remove(fname_pre25)
+        fname_obsolete = _pbtable_obsolete.pop(passband, None)
+        if fname_obsolete is not None and fname_obsolete != passband_fname_local and os.path.dirname(fname_obsolete) == os.path.dirname(pbdir):
+            logger.warning("deleting obsolete passband file: {}".format(fname_obsolete))
+            os.remove(fname_obsolete)
 
         _init_passband(passband_fname_local)
 
