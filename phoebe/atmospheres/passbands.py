@@ -914,7 +914,7 @@ class Passband:
         else:
             raise NotImplementedError(f'ld_func={ld_func} is not supported.')
 
-    def compute_intensities(self, atm, include_mus=True, include_ld=True,  ld_weighting='uniform', include_extinction=False, rvs=None, ebvs=None, add_history_entry=True, verbose=True):
+    def compute_intensities(self, atm, include_mus=True, include_ld=True,  ld_weighting='interval', include_extinction=False, rvs=None, ebvs=None, add_history_entry=True, verbose=True):
         """
         Computes direction-dependent passband intensities using the passed `atm`
         model atmospheres.
@@ -929,7 +929,7 @@ class Passband:
             limb darkening coefficients in the computation. This will also
             calculate and tabulate integrals of the piecewise linear limb
             darkening function.
-        * `ld_weighting' (optional, default='uniform'): set to 'interval' to derive
+        * `ld_weighting' (optional, default='interval'): set to 'interval' to derive
             interval-weighted limb darkening coefficients.
         * `include_extinction` (boolean, optional, default=False): should the
             extinction tables be computed as well. The mean effect of reddening
@@ -1114,21 +1114,20 @@ class Passband:
             # define the residuals function for the least squares optimization:
             def ld_resids(x, *args, **kwargs):
                 xdata = kwargs.get('xdata')
-                
-                if ld_weighting=='uniform':
-                    sigma=np.ones(len(xdata))
-                elif ld_weighting=='interval':
+
+                if ld_weighting == 'uniform':
+                    sigma = np.ones(len(xdata))
+                elif ld_weighting == 'interval':
                     diffs = np.diff(xdata)
                     delta = np.r_[diffs[0], diffs]
-                    sigma=1/np.sqrt(delta)
+                    sigma = 1/np.sqrt(delta)
                 else:
                     raise ValueError(f'ld_weighting={ld_weighting} is not supported.')
-                
+
                 ydata = kwargs.get('ydata')
                 ld_func = kwargs.get('ld_func', 'linear')
 
                 return (self.ld_func(mu=xdata, ld_coeffs=x, ld_func=ld_func) - ydata)/sigma
-
 
             # loop over all defined coordinates to compute limb darkening coefficients and integrals:
             for grid, ld_grid, ldint_grid in zip([atm_energy_grid, atm_photon_grid], [ld_energy_grid, ld_photon_grid], [ldint_energy_grid, ldint_photon_grid]):
