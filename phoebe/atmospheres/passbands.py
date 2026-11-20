@@ -288,6 +288,53 @@ class InterpResult:
         return f'<InterpResult: {self.shape}>'
 
 
+def _check_history_entry(history):
+    if not isinstance(history, str):
+        raise ValueError('passband header history entries must be strings.')
+    if ': ' in history:
+        raise ValueError("passband header history entries cannot contain ': '.")
+    if history.endswith('&'):
+        raise ValueError("passband header history entries cannot end with '&'.")
+
+
+def group_history(history):
+    """
+    Groups passband history cards into logical entries.
+
+    History cards hold `timestamp: message` pairs. Cards that end with '&'
+    continue on the next card; consecutive cards with the same timestamp are
+    clauses of a single entry and are joined with '; '.
+
+    Arguments
+    ----------
+    * `history` (list of strings): history cards, as stored in
+      `Passband.history`.
+
+    Returns
+    --------
+    * (list of tuples) (timestamp, message) pairs in chronological order.
+    """
+
+    entries = []
+    continued = False
+    for card in history:
+        timestamp, sep, message = card.partition(': ')
+        if not sep:
+            timestamp, message = '', card
+        if entries and entries[-1][0] == timestamp:
+            if continued:
+                entries[-1][1][-1] += message
+            else:
+                entries[-1][1].append(message)
+        else:
+            entries.append([timestamp, [message]])
+        continued = message.endswith('&')
+        if continued:
+            entries[-1][1][-1] = entries[-1][1][-1][:-1]
+
+    return [(timestamp, '; '.join(clause.rstrip('.') for clause in clauses)) for timestamp, clauses in entries]
+
+
 class Passband:
     def __init__(self, ptf=None, pbset='Johnson', pbname='V',
                  wlunits=u.AA, calibrated=False, reference='', version=1.0,
@@ -453,26 +500,48 @@ class Passband:
     @property
     def log(self):
         h = f'{self.pbset}:{self.pbname} {self.version}\n'
-        for entry in self.history:
-            h += f'  {entry}\n'
+        for timestamp, message in group_history(self.history):
+            h += f'  {timestamp}: {message}\n'
         return h
 
-    def add_to_history(self, history, max_length=46):
+    def add_to_history(self, history, timestamp=None):
         """
         Adds a history entry to the passband file header.
 
+        Each history card holds a `timestamp: message` pair. If the length
+        of the message exceeds the length of the line, the message is wrapped
+        at word boundaries over two/multiple HISTORY keywords; all cards
+        but the last end with '&', following the FITS long-string convention.
+        Entries that share the same timestamp form a single logical entry, see
+        <phoebe.atmospheres.passbands.group_history>.
+
         Parameters
         ----------
-        * `history` (string, required): history entry to be added to the passband header.
-        * `max_length` (int, optional, default=46): maximum length of the history entry.
+        * `history` (string, required): history entry to be added to the
+          passband header. It cannot contain ': ' or end with '&'.
+        * `timestamp` (string, optional, default=None): timestamp of the entry
+          in `time.ctime()` format; if None, the current time is used.
         """
 
-        if not isinstance(history, str):
-            raise ValueError('passband header history entries must be strings.')
-        if len(history) > max_length:
-            raise ValueError(f'comment length should not exceed {max_length} characters.')
+        _check_history_entry(history)
+        timestamp = time.ctime() if timestamp is None else timestamp
+        try:
+            _timestamp_to_dt(timestamp)
+        except ValueError:
+            raise ValueError(f'history timestamp {timestamp!r} is not in time.ctime() format.')
 
-        self.history.append(f'{time.ctime()}: {history}')
+        # an 80-character FITS card minus 'HISTORY ', the timestamp and ': ';
+        # longer cards would be split by astropy without the timestamp prefix:
+        width = 80 - len('HISTORY ') - len(timestamp) - len(': ')
+
+        while len(history) > width:
+            # break after the last space that leaves room for '&':
+            cut = history.rfind(' ', 1, width-1) + 1
+            if cut == 0:
+                cut = width-1
+            self.history.append(f'{timestamp}: {history[:cut]}&')
+            history = history[cut:]
+        self.history.append(f'{timestamp}: {history}')
 
     def add_comment(self, comment):
         """
